@@ -19,6 +19,19 @@ async function main() {
     }
   });
 
+  const clienteConsumidor = await prisma.clientes.upsert({
+    where: { RIF_Cedula: 'V-00000000' },
+    update: { Razon_Social: 'Consumidor Final' },
+    create: {
+      RIF_Cedula: 'V-00000000',
+      Razon_Social: 'Consumidor Final',
+      Direccion: 'Cliente de mostrador',
+      Telefono: '0000000000',
+      Email: 'consumidor@adrialga.local'
+    }
+  });
+  console.log('✅ Cliente Consumidor Final listo:', clienteConsumidor.RIF_Cedula);
+
   console.log('✅ Usuario Admin listo:', usuario.Credencial);
 }
 

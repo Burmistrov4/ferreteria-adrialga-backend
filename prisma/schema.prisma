@@ -27,33 +27,46 @@ model clientes {
   facturas       facturas[]
 }
 
-model detalle_facturas {
-  Detalle_ID               Int       @id @default(autoincrement())
-  Factura_ID               Int
-  Producto_ID              Int
-  Cantidad                 Int
-  Precio_Unitario          Decimal   @default(0.00) @db.Decimal(10, 2)
-  Costo_Unitario_Historico Decimal   @default(0.00) @db.Decimal(18, 2)
-  Subtotal                 Decimal?  @db.Decimal(12, 2)
-  facturas                 facturas  @relation(fields: [Factura_ID], references: [Factura_ID], onDelete: Cascade, map: "FK_DetalleFactura_Facturas")
-  productos                productos @relation(fields: [Producto_ID], references: [Producto_ID], map: "FK_DetalleFactura_Productos")
-
-  @@index([Factura_ID], map: "FK_DetalleFactura_Facturas")
-  @@index([Producto_ID], map: "IDX_DetalleFacturas_Producto")
+model proveedores {
+  Proveedor_ID          Int                     @id @default(autoincrement())
+  RIF_Cedula            String                  @unique(map: "RIF_Cedula") @db.VarChar(20)
+  Razon_Social          String                  @db.VarChar(150)
+  Telefono              String?                 @db.VarChar(20)
+  Email                 String?                 @db.VarChar(100)
+  Direccion             String?                 @db.VarChar(255)
+  Activo                Boolean                 @default(true)
+  Fecha_Registro        DateTime                @default(now()) @db.Timestamp(0)
+  notas_entrega_entrada notas_entrega_entrada[]
 }
 
-model detalle_notas_entrega {
-  Detalle_Nota_ID       Int                   @id @default(autoincrement())
-  Nota_ID               Int
-  Producto_ID           Int
-  Cantidad              Int
-  Costo_Unitario        Decimal               @default(0.00) @db.Decimal(18, 2)
-  Subtotal_Costo        Decimal?              @db.Decimal(18, 2)
-  notas_entrega_entrada notas_entrega_entrada @relation(fields: [Nota_ID], references: [Nota_ID], onDelete: Cascade, map: "FK_DetalleNota_Cabecera")
-  productos             productos             @relation(fields: [Producto_ID], references: [Producto_ID], map: "FK_DetalleNota_Productos")
+model productos {
+  Producto_ID           Int                     @id @default(autoincrement())
+  SKU_Codigo            String                  @unique(map: "SKU_Codigo") @db.VarChar(50)
+  Nombre                String                  @db.VarChar(150)
+  Precio_Venta          Decimal                 @default(0.00) @db.Decimal(18, 2)
+  Costo_Promedio        Decimal                 @default(0.00) @db.Decimal(18, 2)
+  Stock_Actual          Int                     @default(0)
+  Stock_Minimo          Int                     @default(5)
+  Categoria_ID          Int
+  Activo                Boolean                 @default(true)
+  Fecha_Registro        DateTime                @default(now()) @db.Timestamp(0)
+  detalle_facturas      detalle_facturas[]
+  detalle_notas_entrega detalle_notas_entrega[]
+  categorias            categorias              @relation(fields: [Categoria_ID], references: [Categoria_ID], map: "FK_Productos_Categorias")
 
-  @@index([Nota_ID], map: "FK_DetalleNota_Cabecera")
-  @@index([Producto_ID], map: "IDX_DetalleNotas_Producto")
+  @@index([Categoria_ID], map: "IDX_Productos_Categoria")
+}
+
+model usuarios {
+  Usuario_ID            Int                     @id @default(autoincrement())
+  Nombre                String                  @db.VarChar(180)
+  Credencial            String                  @unique(map: "Credencial") @db.VarChar(50)
+  Password              String                  @db.VarChar(255)
+  Rol                   String                  @default("Cajero") @db.VarChar(30)
+  Activo                Boolean                 @default(true)
+  Fecha_Registro        DateTime                @default(now()) @db.Timestamp(0)
+  facturas              facturas[]
+  notas_entrega_entrada notas_entrega_entrada[]
 }
 
 model facturas {
@@ -76,6 +89,21 @@ model facturas {
   @@index([Fecha_Emision], map: "IDX_Facturas_Fecha")
 }
 
+model detalle_facturas {
+  Detalle_ID               Int       @id @default(autoincrement())
+  Factura_ID               Int
+  Producto_ID              Int
+  Cantidad                 Int
+  Precio_Unitario          Decimal   @default(0.00) @db.Decimal(10, 2)
+  Costo_Unitario_Historico Decimal   @default(0.00) @db.Decimal(18, 2)
+  Subtotal                 Decimal?  @db.Decimal(12, 2)
+  facturas                 facturas  @relation(fields: [Factura_ID], references: [Factura_ID], onDelete: Cascade, map: "FK_DetalleFactura_Facturas")
+  productos                productos @relation(fields: [Producto_ID], references: [Producto_ID], map: "FK_DetalleFactura_Productos")
+
+  @@index([Factura_ID], map: "FK_DetalleFactura_Facturas")
+  @@index([Producto_ID], map: "IDX_DetalleFacturas_Producto")
+}
+
 model notas_entrega_entrada {
   Nota_ID               Int                     @id @default(autoincrement())
   Numero_Nota           String                  @unique(map: "Numero_Nota") @db.VarChar(50)
@@ -93,6 +121,20 @@ model notas_entrega_entrada {
   @@index([Fecha_Recepcion], map: "IDX_Notas_Fecha")
 }
 
+model detalle_notas_entrega {
+  Detalle_Nota_ID       Int                   @id @default(autoincrement())
+  Nota_ID               Int
+  Producto_ID           Int
+  Cantidad              Int
+  Costo_Unitario        Decimal               @default(0.00) @db.Decimal(18, 2)
+  Subtotal_Costo        Decimal?              @db.Decimal(18, 2)
+  notas_entrega_entrada notas_entrega_entrada @relation(fields: [Nota_ID], references: [Nota_ID], onDelete: Cascade, map: "FK_DetalleNota_Cabecera")
+  productos             productos             @relation(fields: [Producto_ID], references: [Producto_ID], map: "FK_DetalleNota_Productos")
+
+  @@index([Nota_ID], map: "FK_DetalleNota_Cabecera")
+  @@index([Producto_ID], map: "IDX_DetalleNotas_Producto")
+}
+
 model pagos {
   Pago_ID     Int      @id @default(autoincrement())
   Factura_ID  Int
@@ -103,46 +145,4 @@ model pagos {
   facturas    facturas @relation(fields: [Factura_ID], references: [Factura_ID], onDelete: Cascade, map: "FK_Pagos_Facturas")
 
   @@index([Factura_ID], map: "FK_Pagos_Facturas")
-}
-
-model productos {
-  Producto_ID           Int                     @id @default(autoincrement())
-  SKU_Codigo            String                  @unique(map: "SKU_Codigo") @db.VarChar(50)
-  Nombre                String                  @db.VarChar(150)
-  Precio_Venta          Decimal                 @default(0.00) @db.Decimal(18, 2)
-  Costo_Promedio        Decimal                 @default(0.00) @db.Decimal(18, 2)
-  Stock_Actual          Int                     @default(0)
-  Stock_Minimo          Int                     @default(5)
-  Categoria_ID          Int
-  Activo                Boolean                 @default(true)
-  Fecha_Registro        DateTime                @default(now()) @db.Timestamp(0)
-  detalle_facturas      detalle_facturas[]
-  detalle_notas_entrega detalle_notas_entrega[]
-  categorias            categorias              @relation(fields: [Categoria_ID], references: [Categoria_ID], map: "FK_Productos_Categorias")
-
-  @@index([Categoria_ID], map: "IDX_Productos_Categoria")
-}
-
-model proveedores {
-  Proveedor_ID          Int                     @id @default(autoincrement())
-  RIF_Cedula            String                  @unique(map: "RIF_Cedula") @db.VarChar(20)
-  Razon_Social          String                  @db.VarChar(150)
-  Telefono              String?                 @db.VarChar(20)
-  Email                 String?                 @db.VarChar(100)
-  Direccion             String?                 @db.VarChar(255)
-  Activo                Boolean                 @default(true)
-  Fecha_Registro        DateTime                @default(now()) @db.Timestamp(0)
-  notas_entrega_entrada notas_entrega_entrada[]
-}
-
-model usuarios {
-  Usuario_ID            Int                     @id @default(autoincrement())
-  Nombre                String                  @db.VarChar(180)
-  Credencial            String                  @unique(map: "Credencial") @db.VarChar(50)
-  Password              String                  @db.VarChar(255)
-  Rol                   String                  @default("Cajero") @db.VarChar(30)
-  Activo                Boolean                 @default(true)
-  Fecha_Registro        DateTime                @default(now()) @db.Timestamp(0)
-  facturas              facturas[]
-  notas_entrega_entrada notas_entrega_entrada[]
 }

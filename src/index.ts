@@ -24,6 +24,11 @@ app.get('/', (req, res) => {
   res.json({ status: 'OK', message: 'API Backend Adrialga conectada y operativa' });
 });
 
+// Endpoint global para Tasa de Cambio
+app.get('/api/tasa-cambio', (req, res) => {
+  res.json({ tasa: 36.50 });
+});
+
 // Rutas de autenticación
 app.use('/api/auth', authRoutes);
 
@@ -37,10 +42,10 @@ app.use('/api/clientes', clientesRoutes);
 app.use('/api/proveedores', proveedoresRoutes);
 // Rutas de notas de entrega
 app.use('/api/notas', notasRoutes);
-// Rutas de facturas
+// Rutas de facturas y entradas de inventario
 app.use('/api/facturas', facturasRoutes);
-// Rutas del dashboard
 app.use('/api/dashboard', dashboardRoutes);
+
 // Inicio del servidor
 app.listen(PORT, () => {
   console.log(`🚀 Servidor ejecutándose en http://localhost:${PORT}`);

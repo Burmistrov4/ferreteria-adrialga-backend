@@ -1,90 +1,116 @@
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { prisma } from '../config/db';
 import { AuthRequest } from '../middlewares/auth.middleware';
 
-export const getFacturas = async (_req: AuthRequest, res: Response) => {
+export const getFacturas = async (_req: Request, res: Response) => {
   try {
     const facturas = await prisma.facturas.findMany({
       include: {
         clientes: true,
         usuarios: { select: { Usuario_ID: true, Nombre: true } },
-        detalle_facturas: { include: { productos: true } }
+        detalle_facturas: { include: { productos: true } },
+        pagos: true
       }
     });
-    res.json(facturas);
+    return res.json(facturas);
   } catch (error) {
-    res.status(500).json({ message: 'Error al obtener facturas', error });
+    return res.status(500).json({ message: 'Error al obtener las facturas', error });
+  }
+};
+
+export const getFacturaById = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const factura = await prisma.facturas.findUnique({
+      where: { Factura_ID: Number(id) },
+      include: {
+        clientes: true,
+        usuarios: { select: { Usuario_ID: true, Nombre: true } },
+        detalle_facturas: { include: { productos: true } },
+        pagos: true
+      }
+    });
+
+    if (!factura) {
+      return res.status(404).json({ message: 'Factura no encontrada' });
+    }
+
+    return res.json(factura);
+  } catch (error) {
+    return res.status(500).json({ message: 'Error al obtener la factura', error });
   }
 };
 
 export const createFactura = async (req: AuthRequest, res: Response) => {
+  // Se acepta 'detalles' o 'Detalles' indiferentemente para ser tolerante con el cliente
+  const { Cliente_ID, Numero_Control } = req.body;
+  const detalles = req.body.detalles ?? req.body.Detalles;
+  const Usuario_ID = req.user?.id || req.user?.Usuario_ID || req.body.Usuario_ID || 1;
+
+  if (!Cliente_ID || !detalles || !Array.isArray(detalles) || detalles.length === 0) {
+    return res.status(400).json({
+      message: 'Cliente_ID y al menos un detalle son obligatorios'
+    });
+  }
+
   try {
-    const { Numero_Factura, Cliente_ID, detalles } = req.body;
-    const Usuario_ID = req.user?.id || req.user?.Usuario_ID || 1;
-
-    if (!Numero_Factura || !Cliente_ID || !detalles || !Array.isArray(detalles) || detalles.length === 0) {
-      return res.status(400).json({ 
-        message: 'Numero_Factura, Cliente_ID y al menos un detalle son obligatorios' 
-      });
-    }
-
     const resultado = await prisma.$transaction(async (tx) => {
-      // 1. Validar stock suficiente para todos los productos
+      // 1. Validar stock disponible para todos los productos
       for (const item of detalles) {
-        const producto = await tx.productos.findUnique({
+        const prod = await tx.productos.findUnique({
           where: { Producto_ID: Number(item.Producto_ID) }
         });
 
-        if (!producto || producto.Stock_Actual < item.Cantidad) {
-          throw new Error(`Stock insuficiente para el producto: ${producto?.Nombre || item.Producto_ID}`);
+        if (!prod || prod.Stock_Actual < Number(item.Cantidad)) {
+          throw new Error(`Stock insuficiente para el producto: ${prod?.Nombre || item.Producto_ID}`);
         }
       }
 
-      // 2. Calcular total de la venta
-      let totalVenta = 0;
-      for (const item of detalles) {
-        totalVenta += Number(item.Cantidad) * Number(item.Precio_Unitario);
-      }
+      // 2. Calcular montos
+      const subtotal = detalles.reduce(
+        (acc: number, item: any) => acc + (Number(item.Cantidad) * Number(item.Precio_Unitario)),
+        0
+      );
+      const totalIva = subtotal * 0.16;
+      const totalGeneral = subtotal + totalIva;
 
-      // 3. Crear cabecera de la factura
+      // 3. Crear cabecera y detalles de la factura
+      const numeroControl =
+        Numero_Control || `FV-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}`;
+
       const nuevaFactura = await tx.facturas.create({
         data: {
-          Numero_Factura,
           Cliente_ID: Number(Cliente_ID),
           Usuario_ID: Number(Usuario_ID),
-          Total_Venta: totalVenta,
-          Estatus: 'Pagada'
+          Numero_Control: numeroControl,
+          Subtotal: subtotal,
+          Total_IVA: totalIva,
+          Total_General: totalGeneral,
+          Estatus: 'Pagada',
+          detalle_facturas: {
+            create: detalles.map((d: any) => ({
+              Producto_ID: Number(d.Producto_ID),
+              Cantidad: Number(d.Cantidad),
+              Precio_Unitario: Number(d.Precio_Unitario),
+              Subtotal: Number(d.Cantidad) * Number(d.Precio_Unitario)
+            }))
+          }
         }
       });
 
-      // 4. Registrar detalles y descontar del Stock_Actual
+      // 4. Descontar el stock de los productos vendidos
       for (const item of detalles) {
-        const subtotal = Number(item.Cantidad) * Number(item.Precio_Unitario);
-
-        await tx.detalle_facturas.create({
-          data: {
-            Factura_ID: nuevaFactura.Factura_ID,
-            Producto_ID: Number(item.Producto_ID),
-            Cantidad: Number(item.Cantidad),
-            Precio_Unitario: item.Precio_Unitario,
-            Subtotal: subtotal
-          }
-        });
-
         await tx.productos.update({
           where: { Producto_ID: Number(item.Producto_ID) },
-          data: {
-            Stock_Actual: { decrement: Number(item.Cantidad) }
-          }
+          data: { Stock_Actual: { decrement: Number(item.Cantidad) } }
         });
       }
 
       return nuevaFactura;
     });
 
-    res.status(201).json({ message: 'Factura procesada con éxito', factura: resultado });
+    return res.status(201).json({ message: 'Factura registrada exitosamente', factura: resultado });
   } catch (error: any) {
-    console.error('Error al procesar la factura:', error);
-    res.status(500).json({ message: error.message || 'Error al procesar la venta' });
+    return res.status(400).json({ error: error.message || 'Error al procesar la venta' });
   }
 };
