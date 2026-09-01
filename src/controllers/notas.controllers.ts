@@ -20,7 +20,10 @@ export const getNotasEntrega = async (_req: Request, res: Response) => {
 export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
   try {
     const { Numero_Nota, Proveedor_ID, detalles } = req.body;
-    const Usuario_ID = req.user?.id || req.user?.Usuario_ID || req.body.Usuario_ID || 1;
+    const Usuario_ID = req.user?.usuarioId;
+    if (!Usuario_ID) {
+      return res.status(401).json({ message: 'Token sin identificación de usuario' });
+    }
 
     if (!Numero_Nota || !Proveedor_ID || !detalles || !Array.isArray(detalles) || detalles.length === 0) {
       return res.status(400).json({ 

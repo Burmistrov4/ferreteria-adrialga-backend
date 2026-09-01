@@ -19,12 +19,17 @@ model categorias {
 model clientes {
   Cliente_ID     Int        @id @default(autoincrement())
   RIF_Cedula     String     @unique(map: "RIF_Cedula") @db.VarChar(20)
+  Tipo_Documento String     @default("V") @db.VarChar(1)
+  Num_Documento  String     @default("") @db.VarChar(20)
   Razon_Social   String     @db.VarChar(150)
   Direccion      String?    @db.VarChar(255)
   Telefono       String?    @db.VarChar(20)
   Email          String?    @db.VarChar(100)
   Fecha_Registro DateTime   @default(now()) @db.Timestamp(0)
   facturas       facturas[]
+
+  @@index([Num_Documento], map: "IDX_Clientes_NumDocumento")
+  @@index([Razon_Social], map: "IDX_Clientes_RazonSocial")
 }
 
 model proveedores {
@@ -76,6 +81,7 @@ model facturas {
   Subtotal         Decimal            @default(0.00) @db.Decimal(12, 2)
   Total_IVA        Decimal            @default(0.00) @db.Decimal(12, 2)
   Total_General    Decimal?           @db.Decimal(12, 2)
+  Tasa_Cambio      Decimal?           @db.Decimal(18, 4)
   Estatus          String             @default("Completada") @db.VarChar(20)
   Cliente_ID       Int
   Usuario_ID       Int
@@ -141,6 +147,7 @@ model pagos {
   Metodo_Pago String   @db.VarChar(50)
   Monto       Decimal  @db.Decimal(12, 2)
   Referencia  String?  @db.VarChar(50)
+  Tasa_Cambio Decimal? @db.Decimal(18, 4)
   Fecha_Pago  DateTime @default(now()) @db.Timestamp(0)
   facturas    facturas @relation(fields: [Factura_ID], references: [Factura_ID], onDelete: Cascade, map: "FK_Pagos_Facturas")
 
