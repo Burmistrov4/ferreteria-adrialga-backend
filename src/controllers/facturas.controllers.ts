@@ -7,6 +7,37 @@ import { toD4, addD4, mulD4, divD4, aDecimal, IVA_ALIQUOTA, IGTF_ALIQUOTA, CIEN 
 // Todo lo demás (VES, Pago Móvil, Punto de Venta) se asume en bolívares.
 const METODOS_DIVISA = ['efectivo usd', 'zelle', 'efectivo (usd)', 'divisas'];
 
+// Prisma devuelve las columnas DECIMAL como objetos Decimal (decimal.js).
+// Su toJSON los serializa como cadena, pero lo convertimos a número de forma
+// explícita para garantizar un contrato JSON numérico uniforme con el cliente.
+const decToNumber = (v: any): number | null =>
+  v === null || v === undefined ? null : Number(v.toString());
+
+const sanitizarFactura = (f: any) =>
+  f && {
+    ...f,
+    Subtotal: decToNumber(f.Subtotal),
+    Total_IVA: decToNumber(f.Total_IVA),
+    Monto_IGTF: decToNumber(f.Monto_IGTF),
+    Total_General: decToNumber(f.Total_General),
+    Tasa_Cambio: decToNumber(f.Tasa_Cambio),
+    pagos: Array.isArray(f.pagos)
+      ? f.pagos.map((p: any) => ({
+          ...p,
+          Monto: decToNumber(p.Monto),
+          Tasa_Cambio: decToNumber(p.Tasa_Cambio)
+        }))
+      : f.pagos,
+    detalle_facturas: Array.isArray(f.detalle_facturas)
+      ? f.detalle_facturas.map((d: any) => ({
+          ...d,
+          Precio_Unitario: decToNumber(d.Precio_Unitario),
+          Costo_Unitario_Historico: decToNumber(d.Costo_Unitario_Historico),
+          Subtotal: decToNumber(d.Subtotal)
+        }))
+      : f.detalle_facturas
+  };
+
 export const getFacturas = async (_req: Request, res: Response) => {
   try {
     const facturas = await prisma.facturas.findMany({
@@ -17,7 +48,7 @@ export const getFacturas = async (_req: Request, res: Response) => {
         pagos: true
       }
     });
-    return res.json(facturas);
+    return res.json(facturas.map(sanitizarFactura));
   } catch (error) {
     return res.status(500).json({ message: 'Error al obtener las facturas', error });
   }
@@ -40,7 +71,7 @@ export const getFacturaById = async (req: Request, res: Response) => {
       return res.status(404).json({ message: 'Factura no encontrada' });
     }
 
-    return res.json(factura);
+    return res.json(sanitizarFactura(factura));
   } catch (error) {
     return res.status(500).json({ message: 'Error al obtener la factura', error });
   }
