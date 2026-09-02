@@ -63,13 +63,14 @@ export const getSerieFinanciera = async (req: Request, res: Response) => {
   const { desde, formatoSQL } = calcularRango(periodo);
 
   try {
-    const [serieVentas, agregadoVentas, cajaDiaria, margenRaw, inventarioRaw, productosBajoStock] =
+    const [serieVentas, agregadoVentas, ventasBsRaw, cajaDiaria, margenRaw, inventarioRaw, productosBajoStock] =
       await Promise.all([
-        // a) Serie de ventas agregada por hora/día/mes
+        // a) Serie de ventas agregada por hora/día/mes (USD y Bs con la tasa histórica)
         prisma.$queryRaw<
-          { etiqueta: string; monto: string | number; facturas: number }[]
+          { etiqueta: string; monto: string | number; montoBs: string | number; facturas: number }[]
         >`SELECT DATE_FORMAT(Fecha_Emision, ${formatoSQL}) AS etiqueta,
                   COALESCE(SUM(Total_General), 0) AS monto,
+                  COALESCE(SUM(Total_General * Tasa_Cambio), 0) AS montoBs,
                   COUNT(*) AS facturas
            FROM facturas
            WHERE Fecha_Emision >= ${desde}
@@ -82,6 +83,11 @@ export const getSerieFinanciera = async (req: Request, res: Response) => {
           _count: { _all: true },
           where: { Fecha_Emision: { gte: desde } }
         }),
+
+        // Ventas en Bs = Σ (Total_General × tasa_bcv_historica de cada factura)
+        prisma.$queryRaw<{ montoBs: string | number | null }[]>`SELECT COALESCE(SUM(Total_General * Tasa_Cambio), 0) AS montoBs
+           FROM facturas
+           WHERE Fecha_Emision >= ${desde}`,
 
         // c) Desglose de caja diaria: sumatoria por método de pago desde el
         //    inicio del día (independiente del periodo seleccionado).
@@ -119,20 +125,25 @@ export const getSerieFinanciera = async (req: Request, res: Response) => {
       .sort((a, b) => a.Stock_Actual - b.Stock_Actual);
 
     const montoTotal = n((agregadoVentas._sum as any)?.Total_General);
+    const montoTotalBs = n((ventasBsRaw as any[])[0]?.montoBs);
     const cantidadFacturas = n((agregadoVentas as any)?._count?._all);
     const ticketPromedio = cantidadFacturas > 0 ? montoTotal / cantidadFacturas : 0;
+    const ticketPromedioBs = cantidadFacturas > 0 ? montoTotalBs / cantidadFacturas : 0;
 
     res.json({
       periodo,
       serie: serieVentas.map((f) => ({
         etiqueta: f.etiqueta,
         monto: n(f.monto),
+        montoBs: n(f.montoBs),
         facturas: Number(f.facturas)
       })),
       ventas: {
         montoTotal,
+        montoTotalBs,
         cantidadFacturas,
-        ticketPromedio
+        ticketPromedio,
+        ticketPromedioBs
       },
       margenGanancia: n((margenRaw as any[])[0]?.margen),
       valorInventario: n((inventarioRaw as any[])[0]?.valor),
@@ -155,7 +166,8 @@ export const getDashboardMetrics = async (_req: Request, res: Response) => {
       totalClientes,
       totalProveedores,
       resumenVentas,
-      resumenEntradas
+      resumenEntradas,
+      ventasBsRaw
     ] = await Promise.all([
       // 1. Total de productos activos
       prisma.productos.count({ where: { Activo: true } }),
@@ -170,7 +182,7 @@ export const getDashboardMetrics = async (_req: Request, res: Response) => {
       prisma.clientes.count(),
       prisma.proveedores.count(),
 
-      // 4. Suma total y conteo de facturas (Ventas)
+      // 4. Suma total y conteo de facturas (Ventas en USD)
       prisma.facturas.aggregate({
         _sum: { Total_General: true },
         _count: { _all: true }
@@ -180,7 +192,10 @@ export const getDashboardMetrics = async (_req: Request, res: Response) => {
       prisma.notas_entrega_entrada.aggregate({
         _sum: { Total_Costo: true },
         _count: { _all: true }
-      })
+      }),
+
+      // 6. Ventas reales en Bs = Σ (Total_General × tasa_bcv_historica)
+      prisma.$queryRaw<{ montoBs: string | number | null }[]>`SELECT COALESCE(SUM(Total_General * Tasa_Cambio), 0) AS montoBs FROM facturas`
     ]);
 
     // Filtrar productos con stock actual menor o igual al mínimo
@@ -198,7 +213,10 @@ export const getDashboardMetrics = async (_req: Request, res: Response) => {
         totalClientes,
         totalProveedores,
         totalFacturas: ventasObj._count?._all || 0,
+        // Ventas en USD (suma directa de Total_General)
         montoTotalVentas: ventasObj._sum?.Total_General || 0,
+        // Ventas reales en Bs (Total_General × tasa histórica de cada factura)
+        montoTotalVentasBs: n((ventasBsRaw as any[])[0]?.montoBs),
         totalNotasEntrega: entradasObj._count?._all || 0,
         montoTotalEntradas: entradasObj._sum?.Total_Costo || 0
       },

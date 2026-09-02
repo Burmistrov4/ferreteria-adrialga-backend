@@ -48,8 +48,8 @@ model productos {
   Producto_ID           Int                     @id @default(autoincrement())
   SKU_Codigo            String                  @unique(map: "SKU_Codigo") @db.VarChar(50)
   Nombre                String                  @db.VarChar(150)
-  Precio_Venta          Decimal                 @default(0.00) @db.Decimal(18, 2)
-  Costo_Promedio        Decimal                 @default(0.00) @db.Decimal(18, 2)
+  Precio_Venta          Decimal                 @default(0.0000) @db.Decimal(18, 4)
+  Costo_Promedio        Decimal                 @default(0.0000) @db.Decimal(18, 4)
   Stock_Actual          Int                     @default(0)
   Stock_Minimo          Int                     @default(5)
   Categoria_ID          Int
@@ -78,10 +78,12 @@ model facturas {
   Factura_ID       Int                @id @default(autoincrement())
   Numero_Control   String?            @unique(map: "Numero_Control") @db.VarChar(50)
   Fecha_Emision    DateTime           @default(now()) @db.Timestamp(0)
-  Subtotal         Decimal            @default(0.00) @db.Decimal(12, 2)
-  Total_IVA        Decimal            @default(0.00) @db.Decimal(12, 2)
-  Total_General    Decimal?           @db.Decimal(12, 2)
-  Tasa_Cambio      Decimal?           @db.Decimal(18, 4)
+  Subtotal         Decimal            @default(0.0000) @db.Decimal(12, 4)
+  Total_IVA        Decimal            @default(0.0000) @db.Decimal(12, 4)
+  Total_General    Decimal            @default(0.0000) @db.Decimal(12, 4)
+  // Tasa BCV histórica obligatoria usada al momento de la emisión (4 decimales).
+  Tasa_Cambio      Decimal            @db.Decimal(12, 4)
+  Monto_IGTF       Decimal            @default(0.0000) @db.Decimal(12, 4)
   Estatus          String             @default("Completada") @db.VarChar(20)
   Cliente_ID       Int
   Usuario_ID       Int
@@ -100,9 +102,9 @@ model detalle_facturas {
   Factura_ID               Int
   Producto_ID              Int
   Cantidad                 Int
-  Precio_Unitario          Decimal   @default(0.00) @db.Decimal(10, 2)
-  Costo_Unitario_Historico Decimal   @default(0.00) @db.Decimal(18, 2)
-  Subtotal                 Decimal?  @db.Decimal(12, 2)
+  Precio_Unitario          Decimal   @default(0.0000) @db.Decimal(18, 4)
+  Costo_Unitario_Historico Decimal   @default(0.0000) @db.Decimal(18, 4)
+  Subtotal                 Decimal?  @db.Decimal(12, 4)
   facturas                 facturas  @relation(fields: [Factura_ID], references: [Factura_ID], onDelete: Cascade, map: "FK_DetalleFactura_Facturas")
   productos                productos @relation(fields: [Producto_ID], references: [Producto_ID], map: "FK_DetalleFactura_Productos")
 
@@ -114,7 +116,7 @@ model notas_entrega_entrada {
   Nota_ID               Int                     @id @default(autoincrement())
   Numero_Nota           String                  @unique(map: "Numero_Nota") @db.VarChar(50)
   Fecha_Recepcion       DateTime                @default(now()) @db.Timestamp(0)
-  Total_Costo           Decimal                 @default(0.00) @db.Decimal(18, 2)
+  Total_Costo           Decimal                 @default(0.0000) @db.Decimal(18, 4)
   Estatus               String                  @default("Procesada") @db.VarChar(20)
   Proveedor_ID          Int
   Usuario_ID            Int
@@ -132,8 +134,8 @@ model detalle_notas_entrega {
   Nota_ID               Int
   Producto_ID           Int
   Cantidad              Int
-  Costo_Unitario        Decimal               @default(0.00) @db.Decimal(18, 2)
-  Subtotal_Costo        Decimal?              @db.Decimal(18, 2)
+  Costo_Unitario        Decimal               @default(0.0000) @db.Decimal(18, 4)
+  Subtotal_Costo        Decimal?              @db.Decimal(18, 4)
   notas_entrega_entrada notas_entrega_entrada @relation(fields: [Nota_ID], references: [Nota_ID], onDelete: Cascade, map: "FK_DetalleNota_Cabecera")
   productos             productos             @relation(fields: [Producto_ID], references: [Producto_ID], map: "FK_DetalleNota_Productos")
 
@@ -145,9 +147,11 @@ model pagos {
   Pago_ID     Int      @id @default(autoincrement())
   Factura_ID  Int
   Metodo_Pago String   @db.VarChar(50)
-  Monto       Decimal  @db.Decimal(12, 2)
+  Monto       Decimal  @db.Decimal(12, 4)
   Referencia  String?  @db.VarChar(50)
-  Tasa_Cambio Decimal? @db.Decimal(18, 4)
+  // true → pago en divisas extranjeras (base del IGTF 3%)
+  Es_Divisa   Boolean  @default(false)
+  Tasa_Cambio Decimal? @db.Decimal(12, 4)
   Fecha_Pago  DateTime @default(now()) @db.Timestamp(0)
   facturas    facturas @relation(fields: [Factura_ID], references: [Factura_ID], onDelete: Cascade, map: "FK_Pagos_Facturas")
 

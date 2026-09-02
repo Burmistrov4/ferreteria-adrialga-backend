@@ -1,6 +1,11 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/db';
 import { AuthRequest } from '../middlewares/auth.middleware';
+import { toD4, addD4, mulD4, divD4, aDecimal, IVA_ALIQUOTA, IGTF_ALIQUOTA, CIEN } from '../utils/dinero';
+
+// Métodos de pago considerados en divisas extranjeras (base del IGTF 3%).
+// Todo lo demás (VES, Pago Móvil, Punto de Venta) se asume en bolívares.
+const METODOS_DIVISA = ['efectivo usd', 'zelle', 'efectivo (usd)', 'divisas'];
 
 export const getFacturas = async (_req: Request, res: Response) => {
   try {
@@ -59,13 +64,54 @@ export const createFactura = async (req: AuthRequest, res: Response) => {
   // Detalle de pagos (multipago) enviado por el módulo de cobro del POS.
   // Shape esperado: { efectivoUSD, efectivoVES, pagoMovil, puntoVenta, referencia? }
   const dp = req.body.Detalles_Pago ?? req.body.detallesPago ?? {};
-  const tasaCambio = Number(req.body.Tasa_Cambio) || Number(dp.tasaCambio) || 0;
   const referenciaPago = (dp.referencia ?? null) as string | null;
+
+  // ── Regla fiscal: la tasa BCV histórica es obligatoria para facturar ──────
+  const tasaD4 = toD4(req.body.Tasa_Cambio ?? dp.tasaCambio);
+  if (tasaD4 <= 0n) {
+    return res.status(400).json({
+      message:
+        'La tasa BCV es obligatoria para emitir una factura (no se pudo determinar la tasa de cambio)'
+    });
+  }
+  const tasaHistorica = aDecimal(tasaD4);
+
+  // Pagos normalizados a 4 decimales, con marca de divisa extranjera.
+  // (metodo, monto escalado)
+  const pagosNormalizados = [
+    { metodo: 'Efectivo USD', monto: toD4(dp.efectivoUSD) },
+    { metodo: 'Efectivo VES', monto: toD4(dp.efectivoVES) },
+    { metodo: 'Pago Móvil', monto: toD4(dp.pagoMovil) },
+    { metodo: 'Punto de Venta', monto: toD4(dp.puntoVenta) }
+  ].filter((p) => p.monto > 0n);
+
+  const esDivisa = (metodo: string) =>
+    METODOS_DIVISA.some((d) => metodo.toLowerCase().includes(d));
+
+  // ── Motor fiscal (precisión exacta 4 decimales, sin floats) ──────────────
+  // Base Imponible (USD) = Σ (Cantidad × Precio_Unitario)
+  let baseImponible = 0n;
+  for (const item of detalles) {
+    baseImponible = addD4(
+      baseImponible,
+      mulD4(toD4(item.Cantidad), toD4(item.Precio_Unitario))
+    );
+  }
+  // IVA (16%)
+  const totalIva = divD4(mulD4(baseImponible, IVA_ALIQUOTA), CIEN);
+  // IGTF (3%) sobre pagos en divisas EXCLUSIVAMENTE
+  const pagosEnDivisas = pagosNormalizados
+    .filter((p) => esDivisa(p.metodo))
+    .reduce((acc, p) => addD4(acc, p.monto), 0n);
+  const montoIgtf = divD4(mulD4(pagosEnDivisas, IGTF_ALIQUOTA), CIEN);
+  const montoIgtfBs = mulD4(montoIgtf, tasaD4);
+  // Total General = Base + IVA + IGTF
+  const totalGeneral = addD4(addD4(baseImponible, totalIva), montoIgtf);
 
   try {
     const resultado = await prisma.$transaction(async (tx) => {
       // 1. Validar stock disponible y capturar el costo promedio vigente de cada producto
-      const costosPorProducto = new Map<number, number>();
+      const costosPorProducto = new Map<number, bigint>();
       for (const item of detalles) {
         const prod = await tx.productos.findUnique({
           where: { Producto_ID: Number(item.Producto_ID) }
@@ -74,18 +120,10 @@ export const createFactura = async (req: AuthRequest, res: Response) => {
         if (!prod || prod.Stock_Actual < Number(item.Cantidad)) {
           throw new Error(`Stock insuficiente para el producto: ${prod?.Nombre || item.Producto_ID}`);
         }
-        costosPorProducto.set(Number(item.Producto_ID), Number(prod.Costo_Promedio));
+        costosPorProducto.set(Number(item.Producto_ID), toD4(prod.Costo_Promedio));
       }
 
-      // 2. Calcular montos
-      const subtotal = detalles.reduce(
-        (acc: number, item: any) => acc + (Number(item.Cantidad) * Number(item.Precio_Unitario)),
-        0
-      );
-      const totalIva = subtotal * 0.16;
-      const totalGeneral = subtotal + totalIva;
-
-      // 3. Crear cabecera y detalles de la factura
+      // 3. Crear cabecera y detalles de la factura (montos exactos a 4 decimales)
       const numeroControl =
         Numero_Control || `FV-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}`;
 
@@ -94,39 +132,41 @@ export const createFactura = async (req: AuthRequest, res: Response) => {
           Cliente_ID: Number(Cliente_ID),
           Usuario_ID: Number(Usuario_ID),
           Numero_Control: numeroControl,
-          Subtotal: subtotal,
-          Total_IVA: totalIva,
-          Total_General: totalGeneral,
-          // Tasa BCV usada al momento del pago (queda registrada con la factura)
-          Tasa_Cambio: tasaCambio > 0 ? tasaCambio : null,
+          Subtotal: aDecimal(baseImponible),
+          Total_IVA: aDecimal(totalIva),
+          Total_General: aDecimal(totalGeneral),
+          // Tasa BCV histórica (obligatoria, 4 decimales)
+          Tasa_Cambio: tasaHistorica,
+          // IGTF 3% sobre pagos en divisas (USD) y su equivalencia en Bs
+          Monto_IGTF: aDecimal(montoIgtf),
           Estatus: 'Pagada',
           detalle_facturas: {
-            create: detalles.map((d: any) => ({
-              Producto_ID: Number(d.Producto_ID),
-              Cantidad: Number(d.Cantidad),
-              Precio_Unitario: Number(d.Precio_Unitario),
-              // Congela el costo promedio ponderado vigente al momento de la venta
-              // para poder calcular el margen de ganancia histórico.
-              Costo_Unitario_Historico: costosPorProducto.get(Number(d.Producto_ID)) ?? 0,
-              Subtotal: Number(d.Cantidad) * Number(d.Precio_Unitario)
-            }))
+            create: detalles.map((d: any) => {
+              const cantidad = toD4(d.Cantidad);
+              const precio = toD4(d.Precio_Unitario);
+              return {
+                Producto_ID: Number(d.Producto_ID),
+                Cantidad: Number(d.Cantidad),
+                Precio_Unitario: aDecimal(precio),
+                // Congela el costo promedio ponderado vigente al momento de la venta
+                // para poder calcular el margen de ganancia histórico.
+                Costo_Unitario_Historico: aDecimal(
+                  costosPorProducto.get(Number(d.Producto_ID)) ?? 0n
+                ),
+                Subtotal: aDecimal(mulD4(cantidad, precio))
+              };
+            })
           },
-          // Persistencia del multipago: cada método con su monto, referencia (si aplica)
-          // y la tasa de cambio usada en ese momento. La fecha/hora queda en Fecha_Pago.
+          // Persistencia del multipago: cada método con su monto, referencia (si aplica),
+          // marca de divisa extranjera y la tasa de cambio usada en ese momento.
           pagos: {
-            create: [
-              { monto: Number(dp.efectivoUSD) || 0, metodo: 'Efectivo USD' },
-              { monto: Number(dp.efectivoVES) || 0, metodo: 'Efectivo VES' },
-              { monto: Number(dp.pagoMovil) || 0, metodo: 'Pago Móvil' },
-              { monto: Number(dp.puntoVenta) || 0, metodo: 'Punto de Venta' }
-            ]
-              .filter((p) => p.monto > 0)
-              .map((p) => ({
-                Metodo_Pago: p.metodo,
-                Monto: p.monto,
-                Referencia: referenciaPago,
-                Tasa_Cambio: tasaCambio > 0 ? tasaCambio : null
-              }))
+            create: pagosNormalizados.map((p) => ({
+              Metodo_Pago: p.metodo,
+              Monto: aDecimal(p.monto),
+              Referencia: referenciaPago,
+              Es_Divisa: esDivisa(p.metodo),
+              Tasa_Cambio: tasaHistorica
+            }))
           }
         }
       });

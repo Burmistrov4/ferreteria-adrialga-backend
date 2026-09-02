@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/db';
 import { AuthRequest } from '../middlewares/auth.middleware';
+import { toD4, addD4, mulD4, divD4, aDecimal } from '../utils/dinero';
 
 export const getNotasEntrega = async (_req: Request, res: Response) => {
   try {
@@ -32,9 +33,13 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
     }
 
     const resultado = await prisma.$transaction(async (tx) => {
-      let totalCosto = 0;
+      // Total de la nota a 4 decimales exactos (sin floats)
+      let totalCosto = 0n;
       for (const item of detalles) {
-        totalCosto += Number(item.Cantidad) * Number(item.Costo_Unitario);
+        totalCosto = addD4(
+          totalCosto,
+          mulD4(toD4(item.Cantidad), toD4(item.Costo_Unitario))
+        );
       }
 
       const nuevaNota = await tx.notas_entrega_entrada.create({
@@ -42,45 +47,51 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
           Numero_Nota,
           Proveedor_ID: Number(Proveedor_ID),
           Usuario_ID: Number(Usuario_ID),
-          Total_Costo: totalCosto,
+          Total_Costo: aDecimal(totalCosto),
           Estatus: 'Procesada'
         }
       });
 
       for (const item of detalles) {
-        const subtotal = Number(item.Cantidad) * Number(item.Costo_Unitario);
+        const cantidadD4 = toD4(item.Cantidad);
+        const costoD4 = toD4(item.Costo_Unitario);
+        const subtotal = mulD4(cantidadD4, costoD4);
 
         await tx.detalle_notas_entrega.create({
           data: {
             Nota_ID: nuevaNota.Nota_ID,
             Producto_ID: Number(item.Producto_ID),
             Cantidad: Number(item.Cantidad),
-            Costo_Unitario: Number(item.Costo_Unitario),
-            Subtotal_Costo: subtotal
+            Costo_Unitario: aDecimal(costoD4),
+            Subtotal_Costo: aDecimal(subtotal)
           }
         });
 
-        // Actualizar stock y recalcular el costo promedio ponderado.
-        // Costo_Promedio = (stockAnterior * costoAnterior + cantEntrada * costoEntrada)
-        //                / (stockAnterior + cantEntrada)
+        // ── Costo Promedio Ponderado (CPP) con aritmética exacta ─────────
+        // CPP_nuevo = ((Stock_actual × CPP_actual) + (Cant_entrante × Precio_compra))
+        //             / (Stock_actual + Cant_entrante)
+        // Si Stock_actual = 0 → CPP_nuevo = Precio_compra directamente.
         const productoActual = await tx.productos.findUnique({
           where: { Producto_ID: Number(item.Producto_ID) }
         });
 
         const stockAnterior = productoActual ? Number(productoActual.Stock_Actual) : 0;
-        const costoAnterior = productoActual ? Number(productoActual.Costo_Promedio) : 0;
-        const cantidadEntrada = Number(item.Cantidad);
-        const costoEntrada = Number(item.Costo_Unitario);
-        const nuevoStock = stockAnterior + cantidadEntrada;
-        const nuevoCostoPromedio = nuevoStock > 0
-          ? (stockAnterior * costoAnterior + cantidadEntrada * costoEntrada) / nuevoStock
-          : costoEntrada;
+        const cppActual = productoActual ? toD4(productoActual.Costo_Promedio) : 0n;
+        const nuevoStock = stockAnterior + Number(item.Cantidad);
+
+        const cppNuevo =
+          stockAnterior > 0
+            ? divD4(
+                addD4(mulD4(toD4(stockAnterior), cppActual), mulD4(cantidadD4, costoD4)),
+                toD4(nuevoStock)
+              )
+            : costoD4;
 
         await tx.productos.update({
           where: { Producto_ID: Number(item.Producto_ID) },
           data: {
             Stock_Actual: nuevoStock,
-            Costo_Promedio: nuevoCostoPromedio
+            Costo_Promedio: aDecimal(cppNuevo)
           }
         });
       }
