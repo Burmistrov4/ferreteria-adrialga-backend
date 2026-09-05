@@ -17,6 +17,30 @@ export const TesoreriaService = {
     };
   },
 
+  /// Verifica si hay fondos suficientes en caja para dar vuelto.
+  /// [montoUSD] y [montoVES] representan el vuelto requerido en cada moneda.
+  /// Retorna { puedeProcesar: boolean, saldoUSD: number, saldoVES: number, faltanteUSD: number, faltanteVES: number }
+  async verificarFondosVuelto(montoUSD: number, montoVES: number, tasaCambio: number) {
+    const caja = await asegurarCajaPrincipal(prisma);
+    const saldoUSD = Number(caja.Saldo_Actual);
+    
+    // Convertir todo a USD para comparación: saldoVES / tasa = saldo en USD
+    const saldoEquivalenteUSD = montoVES > 0 && tasaCambio > 0 ? montoVES / tasaCambio : 0;
+    const totalRequeridoUSD = montoUSD + saldoEquivalenteUSD;
+    
+    const puedeProcesar = saldoUSD >= totalRequeridoUSD;
+    const faltanteUSD = puedeProcesar ? 0 : totalRequeridoUSD - saldoUSD;
+    const faltanteVES = faltanteUSD * tasaCambio;
+    
+    return {
+      puedeProcesar,
+      saldoUSD,
+      saldoVES: saldoUSD * tasaCambio,
+      faltanteUSD,
+      faltanteVES,
+    };
+  },
+
   async calcularPatrimonioOperativo() {
     const caja = await asegurarCajaPrincipal(prisma);
     const productos = await prisma.productos.findMany({

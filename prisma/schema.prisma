@@ -10,7 +10,7 @@ datasource db {
 model categorias {
   Categoria_ID   Int         @id @default(autoincrement())
   Nombre         String      @db.VarChar(100)
-  Prefijo_SKU    String      @db.VarChar(3)
+  Prefijo_SKU    String      @default("GEN") @db.VarChar(3)
   Descripcion    String?     @db.VarChar(255)
   Activo         Boolean     @default(true)
   Fecha_Registro DateTime    @default(now()) @db.Timestamp(0)
@@ -84,7 +84,8 @@ model facturas {
   Total_IVA        Decimal            @default(0.0000) @db.Decimal(12, 4)
   Total_General    Decimal            @default(0.0000) @db.Decimal(12, 4)
   // Tasa BCV histórica obligatoria usada al momento de la emisión (4 decimales).
-  Tasa_Cambio      Decimal            @db.Decimal(12, 4)
+  // Default temporal 1.0 para sincronización con Railway (rellena filas existentes).
+  Tasa_Cambio      Decimal            @default(1.0) @db.Decimal(12, 4)
   Monto_IGTF       Decimal            @default(0.0000) @db.Decimal(12, 4)
   Estatus          String             @default("Completada") @db.VarChar(20)
   Cliente_ID       Int

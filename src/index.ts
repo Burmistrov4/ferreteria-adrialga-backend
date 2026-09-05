@@ -11,6 +11,7 @@ import facturasRoutes from './routes/facturas.routes';
 import dashboardRoutes from './routes/dashboard.routes';
 import scrapingRoutes from './routes/scraping.routes';
 import tesoreriaRoutes from './routes/tesoreria.routes';
+import { getHealth } from './controllers/health.controllers';
 
 dotenv.config();
 
@@ -51,6 +52,9 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/scraping', scrapingRoutes);
 // Rutas de tesorería, caja y cuentas por pagar
 app.use('/api/tesoreria', tesoreriaRoutes);
+
+// Healthcheck de producción (sin auth, consulta liviana SELECT 1 a MySQL)
+app.get('/api/health', getHealth);
 
 // Inicio del servidor
 app.listen(PORT, () => {
