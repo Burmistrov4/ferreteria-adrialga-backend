@@ -10,6 +10,21 @@ export const getTesoreriaSaldo = async (_req: Request, res: Response) => {
   }
 };
 
+/// Verifica si hay fondos suficientes en caja para dar vuelto.
+/// Query params: montoUSD, montoVES, tasaCambio
+export const verificarFondosVuelto = async (req: Request, res: Response) => {
+  try {
+    const montoUSD = Number(req.query.montoUSD ?? req.body.montoUSD ?? 0);
+    const montoVES = Number(req.query.montoVES ?? req.body.montoVES ?? 0);
+    const tasaCambio = Number(req.query.tasaCambio ?? req.body.tasaCambio ?? 0);
+    
+    const resultado = await TesoreriaService.verificarFondosVuelto(montoUSD, montoVES, tasaCambio);
+    res.json(resultado);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 export const getPatrimonioOperativo = async (_req: Request, res: Response) => {
   try {
     const data = await TesoreriaService.calcularPatrimonioOperativo();
