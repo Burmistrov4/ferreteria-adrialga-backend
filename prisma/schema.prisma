@@ -10,6 +10,7 @@ datasource db {
 model categorias {
   Categoria_ID   Int         @id @default(autoincrement())
   Nombre         String      @db.VarChar(100)
+  Prefijo_SKU    String      @db.VarChar(3)
   Descripcion    String?     @db.VarChar(255)
   Activo         Boolean     @default(true)
   Fecha_Registro DateTime    @default(now()) @db.Timestamp(0)
@@ -42,6 +43,7 @@ model proveedores {
   Activo                Boolean                 @default(true)
   Fecha_Registro        DateTime                @default(now()) @db.Timestamp(0)
   notas_entrega_entrada notas_entrega_entrada[]
+  cuentas_por_pagar     cuentas_por_pagar[]
 }
 
 model productos {
@@ -127,6 +129,7 @@ model notas_entrega_entrada {
   @@index([Proveedor_ID], map: "FK_Notas_Proveedores")
   @@index([Usuario_ID], map: "FK_Notas_Usuarios")
   @@index([Fecha_Recepcion], map: "IDX_Notas_Fecha")
+  cuentas_por_pagar cuentas_por_pagar?
 }
 
 model detalle_notas_entrega {
@@ -156,4 +159,55 @@ model pagos {
   facturas    facturas @relation(fields: [Factura_ID], references: [Factura_ID], onDelete: Cascade, map: "FK_Pagos_Facturas")
 
   @@index([Factura_ID], map: "FK_Pagos_Facturas")
+}
+
+model caja {
+  Caja_ID        Int               @id @default(autoincrement())
+  Nombre         String            @db.VarChar(100)
+  Saldo_Inicial  Decimal           @default(0.0000) @db.Decimal(18, 4)
+  Saldo_Actual   Decimal           @default(0.0000) @db.Decimal(18, 4)
+  Fecha_Apertura DateTime          @default(now()) @db.Timestamp(0)
+  Activa         Boolean           @default(true)
+  movimientos    movimientos_caja[]
+
+  @@index([Activa], map: "IDX_Caja_Activa")
+}
+
+// Movimientos (ingresos/egresos) de la caja. Monto_USD mantiene la
+// denominación única del sistema; el Bs se deriva con Tasa_Cambio.
+model movimientos_caja {
+  Movimiento_ID Int      @id @default(autoincrement())
+  Caja_ID       Int
+  Tipo          String   @db.VarChar(20) // INGRESO | EGRESO
+  Concepto      String   @db.VarChar(255)
+  Metodo_Pago   String   @db.VarChar(50)
+  Monto_USD     Decimal  @db.Decimal(18, 4)
+  Tasa_Cambio   Decimal? @db.Decimal(12, 4)
+  Referencia    String?  @db.VarChar(50)
+  Origen_ID     Int?
+  Origen_Tipo   String?  @db.VarChar(20) // factura | nota | manual
+  Fecha         DateTime @default(now()) @db.Timestamp(0)
+  caja          caja     @relation(fields: [Caja_ID], references: [Caja_ID], map: "FK_MovCaja_Caja")
+
+  @@index([Caja_ID], map: "FK_MovCaja_Caja")
+  @@index([Origen_Tipo, Origen_ID], map: "IDX_MovCaja_Origen")
+}
+
+// Cuentas por pagar a proveedores (compras a crédito).
+// Nota_ID permite tracear la obligación a la nota de entrega de origen.
+model cuentas_por_pagar {
+  CxP_ID        Int                     @id @default(autoincrement())
+  Proveedor_ID  Int
+  Nota_ID       Int                     @unique(map: "UQ_CxP_Nota")
+  Monto_Total   Decimal                 @db.Decimal(18, 4)
+  Monto_Pagado  Decimal                 @default(0.0000) @db.Decimal(18, 4)
+  Saldo         Decimal                 @db.Decimal(18, 4)
+  Fecha         DateTime                @default(now()) @db.Timestamp(0)
+  Vencimiento   DateTime?               @db.Timestamp(0)
+  Estatus       String                  @default("Pendiente") @db.VarChar(20)
+  proveedores   proveedores             @relation(fields: [Proveedor_ID], references: [Proveedor_ID], map: "FK_CxP_Proveedor")
+  notas_entrega_entrada notas_entrega_entrada @relation(fields: [Nota_ID], references: [Nota_ID], map: "FK_CxP_Nota")
+
+  @@index([Proveedor_ID], map: "FK_CxP_Proveedor")
+  @@index([Estatus], map: "IDX_CxP_Estatus")
 }

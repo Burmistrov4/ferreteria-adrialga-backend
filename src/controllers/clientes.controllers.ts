@@ -54,9 +54,14 @@ function construirWhereBusqueda(q: string): Prisma.clientesWhereInput {
 export const getClientes = async (req: Request, res: Response) => {
   try {
     const q = (req.query.q ?? req.query.search ?? '').toString();
+    // ?limit=N: devuelve los N clientes más recientes (por orden de registro)
+    // para el autoload del selector de clientes en el POS.
+    const limit = parseInt(req.query.limit?.toString() ?? '', 10);
+    const usarRecientes = Number.isInteger(limit) && limit > 0;
     const clientes = await prisma.clientes.findMany({
       where: construirWhereBusqueda(q),
-      orderBy: { Razon_Social: 'asc' }
+      orderBy: usarRecientes ? { Cliente_ID: 'desc' } : { Razon_Social: 'asc' },
+      ...(usarRecientes ? { take: limit } : {})
     });
     res.json(clientes);
   } catch (error) {

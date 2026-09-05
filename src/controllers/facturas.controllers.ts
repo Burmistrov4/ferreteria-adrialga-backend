@@ -1,7 +1,9 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/db';
 import { AuthRequest } from '../middlewares/auth.middleware';
+import { normalizarPeriodo, calcularRango, rangoPersonalizado } from '../utils/fechas';
 import { toD4, addD4, mulD4, divD4, aDecimal, IVA_ALIQUOTA, IGTF_ALIQUOTA, CIEN } from '../utils/dinero';
+import { asegurarCajaPrincipal } from '../utils/caja';
 
 // Métodos de pago considerados en divisas extranjeras (base del IGTF 3%).
 // Todo lo demás (VES, Pago Móvil, Punto de Venta) se asume en bolívares.
@@ -38,9 +40,34 @@ const sanitizarFactura = (f: any) =>
       : f.detalle_facturas
   };
 
-export const getFacturas = async (_req: Request, res: Response) => {
+export const getFacturas = async (req: Request, res: Response) => {
   try {
+    // ── Filtro temporal opcional ─────────────────────────────────────────────
+    // 1) Rango personal exacto: ?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
+    // 2) Periodo relativo:      ?periodo=hoy|semana|mes|anio
+    // 3) Sin parámetros:        historial completo.
+    // La demarcación de bordes (00:00:00.000 / 23:59:59.999) se resuelve en
+    // el backend (utils/fechas.ts), única fuente de verdad de fechas.
+    const where: any = {};
+
+    const desdeQ = req.query.desde?.toString();
+    const hastaQ = req.query.hasta?.toString();
+    if (desdeQ && hastaQ) {
+      const rango = rangoPersonalizado(desdeQ, hastaQ);
+      if (!rango) {
+        return res.status(400).json({
+          message: 'Parámetros desde/hasta inválidos (use fechas YYYY-MM-DD)'
+        });
+      }
+      where.Fecha_Emision = { gte: rango.desde, lte: rango.hasta };
+    } else if (req.query.periodo) {
+      const { desde, hasta } = calcularRango(normalizarPeriodo(req.query.periodo));
+      where.Fecha_Emision = { gte: desde, lte: hasta };
+    }
+
     const facturas = await prisma.facturas.findMany({
+      where,
+      orderBy: { Fecha_Emision: 'desc' },
       include: {
         clientes: true,
         usuarios: { select: { Usuario_ID: true, Nombre: true } },
@@ -207,6 +234,32 @@ export const createFactura = async (req: AuthRequest, res: Response) => {
         await tx.productos.update({
           where: { Producto_ID: Number(item.Producto_ID) },
           data: { Stock_Actual: { decrement: Number(item.Cantidad) } }
+        });
+      }
+
+      // 5. Impacto en Tesorería: INGRESO en caja por cada pago recibido
+      //    (misma transacción que la factura) + aumento del saldo de caja.
+      if (pagosNormalizados.length > 0) {
+        const caja = await asegurarCajaPrincipal(tx);
+        const sumaPagos = pagosNormalizados.reduce((acc, p) => addD4(acc, p.monto), 0n);
+        for (const p of pagosNormalizados) {
+          await tx.movimientos_caja.create({
+            data: {
+              Caja_ID: caja.Caja_ID,
+              Tipo: 'INGRESO',
+              Concepto: `Cobro factura #${nuevaFactura.Factura_ID} (${numeroControl})`,
+              Metodo_Pago: p.metodo,
+              Monto_USD: aDecimal(p.monto),
+              Tasa_Cambio: tasaHistorica,
+              Referencia: referenciaPago,
+              Origen_Tipo: 'factura',
+              Origen_ID: nuevaFactura.Factura_ID
+            }
+          });
+        }
+        await tx.caja.update({
+          where: { Caja_ID: caja.Caja_ID },
+          data: { Saldo_Actual: { increment: aDecimal(sumaPagos) } }
         });
       }
 

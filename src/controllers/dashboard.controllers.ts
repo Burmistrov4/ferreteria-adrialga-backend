@@ -1,45 +1,11 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/db';
+import { calcularRango, normalizarPeriodo } from '../utils/fechas';
 
 // ── Utilidades de rango de fechas ────────────────────────────────────────────
-type Periodo = 'hoy' | 'semana' | 'mes' | 'anio';
-
-function inicioDelDia(): Date {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function calcularRango(periodo: Periodo): { desde: Date; formatoSQL: string } {
-  const ahora = new Date();
-  switch (periodo) {
-    case 'hoy': {
-      // Serie por HORA del día actual
-      return { desde: inicioDelDia(), formatoSQL: '%H:00' };
-    }
-    case 'semana': {
-      const d = inicioDelDia();
-      d.setDate(d.getDate() - 6); // últimos 7 días, serie por DÍA
-      return { desde: d, formatoSQL: '%Y-%m-%d' };
-    }
-    case 'mes': {
-      const d = inicioDelDia();
-      d.setDate(1); // mes en curso, serie por DÍA
-      return { desde: d, formatoSQL: '%Y-%m-%d' };
-    }
-    case 'anio': {
-      const d = new Date(ahora.getFullYear(), 0, 1); // año en curso, serie por MES
-      return { desde: d, formatoSQL: '%Y-%m' };
-    }
-  }
-}
-
-function normalizarPeriodo(valor: unknown): Periodo {
-  const p = String(valor ?? 'hoy').toLowerCase();
-  return (['hoy', 'semana', 'mes', 'anio'] as const).includes(p as Periodo)
-    ? (p as Periodo)
-    : 'hoy';
-}
+// Las utilidades de rango de fechas (con bordes inclusivos desde/hasta) se
+// centralizaron en `src/utils/fechas.ts` para su reutilización en facturas y
+// reportes.
 
 const n = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
 
@@ -60,7 +26,7 @@ const n = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v)
  */
 export const getSerieFinanciera = async (req: Request, res: Response) => {
   const periodo = normalizarPeriodo(req.query.periodo);
-  const { desde, formatoSQL } = calcularRango(periodo);
+  const { desde, hasta, formatoSQL } = calcularRango(periodo);
 
   try {
     const [serieVentas, agregadoVentas, ventasBsRaw, cajaDiaria, margenRaw, inventarioRaw, productosBajoStock] =
@@ -73,7 +39,7 @@ export const getSerieFinanciera = async (req: Request, res: Response) => {
                   COALESCE(SUM(Total_General * Tasa_Cambio), 0) AS montoBs,
                   COUNT(*) AS facturas
            FROM facturas
-           WHERE Fecha_Emision >= ${desde}
+           WHERE Fecha_Emision >= ${desde} AND Fecha_Emision <= ${hasta}
            GROUP BY etiqueta
            ORDER BY MIN(Fecha_Emision) ASC`,
 
@@ -81,20 +47,20 @@ export const getSerieFinanciera = async (req: Request, res: Response) => {
         prisma.facturas.aggregate({
           _sum: { Total_General: true },
           _count: { _all: true },
-          where: { Fecha_Emision: { gte: desde } }
+          where: { Fecha_Emision: { gte: desde, lte: hasta } }
         }),
 
         // Ventas en Bs = Σ (Total_General × tasa_bcv_historica de cada factura)
         prisma.$queryRaw<{ montoBs: string | number | null }[]>`SELECT COALESCE(SUM(Total_General * Tasa_Cambio), 0) AS montoBs
            FROM facturas
-           WHERE Fecha_Emision >= ${desde}`,
+           WHERE Fecha_Emision >= ${desde} AND Fecha_Emision <= ${hasta}`,
 
         // c) Desglose de caja diaria: sumatoria por método de pago desde el
         //    inicio del día (independiente del periodo seleccionado).
         prisma.pagos.groupBy({
           by: ['Metodo_Pago'],
           _sum: { Monto: true },
-          where: { Fecha_Pago: { gte: inicioDelDia() } }
+          where: { Fecha_Pago: { gte: calcularRango('hoy').desde } }
         }),
 
         // d) Margen de ganancia histórico del periodo
@@ -119,6 +85,27 @@ export const getSerieFinanciera = async (req: Request, res: Response) => {
           }
         })
       ]);
+
+    // Top 5 productos más vendidos del periodo, por unidades vendidas.
+    // (JOIN directo: prisma.groupBy no soporta columnas de tablas relacionadas)
+    const topProductosRaw = await prisma.$queryRaw<
+      {
+        productoId: number;
+        nombre: string;
+        unidades: string | number | bigint;
+        monto: string | number | null;
+      }[]
+    >`SELECT p.Producto_ID AS productoId,
+             p.Nombre AS nombre,
+             SUM(d.Cantidad) AS unidades,
+             SUM(d.Subtotal) AS monto
+      FROM detalle_facturas d
+      INNER JOIN facturas f ON f.Factura_ID = d.Factura_ID
+      INNER JOIN productos p ON p.Producto_ID = d.Producto_ID
+      WHERE f.Fecha_Emision >= ${desde} AND f.Fecha_Emision <= ${hasta}
+      GROUP BY p.Producto_ID, p.Nombre
+      ORDER BY unidades DESC
+      LIMIT 5`;
 
     const alertasStock = productosBajoStock
       .filter((p) => p.Stock_Actual <= p.Stock_Minimo)
@@ -145,12 +132,28 @@ export const getSerieFinanciera = async (req: Request, res: Response) => {
         ticketPromedio,
         ticketPromedioBs
       },
+      // Rentabilidad real: margen = Σ((Precio − Costo_Histórico/CMP) × Cant),
+      // costo de ventas derivado y % sobre ventas del período.
+      rentabilidad: {
+        margenUsd: n((margenRaw as any[])[0]?.margen),
+        ventasUsd: montoTotal,
+        costoVentasUsd: montoTotal - n((margenRaw as any[])[0]?.margen),
+        porcentaje: montoTotal > 0
+          ? Number(((n((margenRaw as any[])[0]?.margen) / montoTotal) * 100).toFixed(2))
+          : 0
+      },
       margenGanancia: n((margenRaw as any[])[0]?.margen),
       valorInventario: n((inventarioRaw as any[])[0]?.valor),
       cajaDiaria: cajaDiaria
         .map((c) => ({ metodo: c.Metodo_Pago, monto: n((c._sum as any)?.Monto) }))
         .sort((a, b) => b.monto - a.monto),
-      alertasStock
+      alertasStock,
+      topProductos: topProductosRaw.map((t) => ({
+        productoId: Number(t.productoId),
+        nombre: t.nombre,
+        unidades: n(t.unidades),
+        monto: n(t.monto)
+      }))
     });
   } catch (error) {
     console.error('Error al generar la serie financiera del dashboard:', error);
@@ -214,11 +217,11 @@ export const getDashboardMetrics = async (_req: Request, res: Response) => {
         totalProveedores,
         totalFacturas: ventasObj._count?._all || 0,
         // Ventas en USD (suma directa de Total_General)
-        montoTotalVentas: ventasObj._sum?.Total_General || 0,
+        montoTotalVentas: n(ventasObj._sum?.Total_General),
         // Ventas reales en Bs (Total_General × tasa histórica de cada factura)
         montoTotalVentasBs: n((ventasBsRaw as any[])[0]?.montoBs),
         totalNotasEntrega: entradasObj._count?._all || 0,
-        montoTotalEntradas: entradasObj._sum?.Total_Costo || 0
+        montoTotalEntradas: n(entradasObj._sum?.Total_Costo)
       },
       alertas: {
         conteoStockBajo: productosBajoStock.length,
@@ -228,5 +231,92 @@ export const getDashboardMetrics = async (_req: Request, res: Response) => {
   } catch (error) {
     console.error('Error al generar métricas del dashboard:', error);
     res.status(500).json({ message: 'Error al obtener métricas del dashboard', error });
+  }
+};
+
+/**
+ * GET /api/dashboard/exportar?periodo=hoy|semana|mes|anio&formato=csv|json
+ *
+ * Libro diario de ventas y caja del período (auditoría fiscal local):
+ * una fila por factura con desglose fiscal (Subtotal/IVA/IGTF), tasa BCV
+ * histórica, total en Bs y métodos de pago utilizados.
+ * CSV con BOM UTF-8 para compatibilidad con Excel.
+ */
+export const exportarLibroDiario = async (req: Request, res: Response) => {
+  const periodo = normalizarPeriodo(req.query.periodo);
+  const { desde, hasta } = calcularRango(periodo);
+  const formato =
+    (req.query.formato ?? 'csv').toString().toLowerCase() === 'json' ? 'json' : 'csv';
+
+  try {
+    const facturas = await prisma.facturas.findMany({
+      where: { Fecha_Emision: { gte: desde, lte: hasta } },
+      include: {
+        clientes: { select: { Razon_Social: true, RIF_Cedula: true } },
+        pagos: { select: { Metodo_Pago: true, Monto: true, Es_Divisa: true } }
+      },
+      orderBy: { Fecha_Emision: 'asc' }
+    });
+
+    const filas = facturas.map((f) => {
+      const pagosStr = f.pagos
+        .map((p) => `${p.Metodo_Pago}: ${n(p.Monto).toFixed(2)}${p.Es_Divisa ? ' (USD)' : ''}`)
+        .join(' | ');
+      const totalBs = n(f.Total_General) * n(f.Tasa_Cambio);
+      return {
+        facturaId: f.Factura_ID,
+        numeroControl: f.Numero_Control ?? '',
+        fecha: f.Fecha_Emision.toISOString(),
+        cliente: f.clientes?.Razon_Social ?? '',
+        rif: f.clientes?.RIF_Cedula ?? '',
+        subtotalUsd: n(f.Subtotal),
+        ivaUsd: n(f.Total_IVA),
+        igtfUsd: n(f.Monto_IGTF),
+        totalUsd: n(f.Total_General),
+        tasaBcv: n(f.Tasa_Cambio),
+        totalBs: Number(totalBs.toFixed(2)),
+        estatus: f.Estatus,
+        metodosPago: pagosStr
+      };
+    });
+
+    if (formato === 'json') {
+      return res.json({
+        generado: new Date().toISOString(),
+        periodo,
+        totalRegistros: filas.length,
+        registros: filas
+      });
+    }
+
+    const encabezado = [
+      'Factura_ID', 'Numero_Control', 'Fecha', 'Cliente', 'RIF',
+      'Subtotal_USD', 'IVA_USD', 'IGTF_USD', 'Total_USD', 'Tasa_BCV',
+      'Total_Bs', 'Estatus', 'Metodos_Pago'
+    ];
+    const esc = (v: unknown) => {
+      const s = v?.toString() ?? '';
+      return /[",;\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csv = [
+      encabezado.join(','),
+      ...filas.map((f) =>
+        [
+          f.facturaId, f.numeroControl, f.fecha, f.cliente, f.rif,
+          f.subtotalUsd, f.ivaUsd, f.igtfUsd, f.totalUsd, f.tasaBcv,
+          f.totalBs, f.estatus, f.metodosPago
+        ].map(esc).join(',')
+      )
+    ].join('\n');
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="libro_diario_${periodo}.csv"`
+    );
+    return res.send('\ufeff' + csv); // BOM para Excel
+  } catch (error) {
+    console.error('Error al exportar el libro diario:', error);
+    res.status(500).json({ message: 'Error al exportar el libro diario', error });
   }
 };

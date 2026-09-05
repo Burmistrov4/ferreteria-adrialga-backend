@@ -1,4 +1,4 @@
-import express from 'express';
+﻿import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import authRoutes from './routes/auth.routes';
@@ -9,6 +9,8 @@ import proveedoresRoutes from './routes/proveedores.routes';
 import notasRoutes from './routes/notas.routes';
 import facturasRoutes from './routes/facturas.routes';
 import dashboardRoutes from './routes/dashboard.routes';
+import scrapingRoutes from './routes/scraping.routes';
+import tesoreriaRoutes from './routes/tesoreria.routes';
 
 dotenv.config();
 
@@ -45,6 +47,10 @@ app.use('/api/notas', notasRoutes);
 // Rutas de facturas y entradas de inventario
 app.use('/api/facturas', facturasRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+// Rutas de scraping (proxy al microservicio Python)
+app.use('/api/scraping', scrapingRoutes);
+// Rutas de tesorería, caja y cuentas por pagar
+app.use('/api/tesoreria', tesoreriaRoutes);
 
 // Inicio del servidor
 app.listen(PORT, () => {

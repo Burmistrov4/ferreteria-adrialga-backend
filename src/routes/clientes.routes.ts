@@ -8,14 +8,14 @@ import {
   buscarClientePorDocumento
 } from '../controllers/clientes.controllers';
 import { authenticateToken } from '../middlewares/auth.middleware';
-import { ScraperService } from '../services/scraper.service';
+import { ScrapingService } from '../services/scraping.service';
 
 const router = Router();
 
 // Rutas públicas (BCV y Consulta SENIAT)
 router.get('/bcv-rate', async (req, res) => {
   try {
-    const data = await ScraperService.obtenerTasaBCV();
+    const data = await ScrapingService.obtenerTasaBCV();
     return res.json(data);
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
@@ -24,10 +24,12 @@ router.get('/bcv-rate', async (req, res) => {
 
 router.get('/consultar-cliente/:cedula', async (req, res) => {
   try {
-    const data = await ScraperService.consultarSeniat(req.params.cedula);
+    const data = await ScrapingService.consultarSeniat(req.params.cedula);
     return res.json(data);
   } catch (error: any) {
-    return res.status(404).json({ error: error.message });
+    return res
+      .status(error.statusCode ?? 404)
+      .json({ error: error.message });
   }
 });
 
