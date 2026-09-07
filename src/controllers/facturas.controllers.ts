@@ -3,7 +3,7 @@ import { prisma } from '../config/db';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import { normalizarPeriodo, calcularRango, rangoPersonalizado } from '../utils/fechas';
 import { toD4, addD4, mulD4, divD4, aDecimal, IVA_ALIQUOTA, IGTF_ALIQUOTA, CIEN } from '../utils/dinero';
-import { asegurarCajaPrincipal } from '../utils/caja';
+import { exigirCajaAbierta } from '../utils/caja';
 
 // Métodos de pago considerados en divisas extranjeras (base del IGTF 3%).
 // Todo lo demás (VES, Pago Móvil, Punto de Venta) se asume en bolívares.
@@ -240,7 +240,8 @@ export const createFactura = async (req: AuthRequest, res: Response) => {
       // 5. Impacto en Tesorería: INGRESO en caja por cada pago recibido
       //    (misma transacción que la factura) + aumento del saldo de caja.
       if (pagosNormalizados.length > 0) {
-        const caja = await asegurarCajaPrincipal(tx);
+        // Regla de negocio (arqueo): toda venta exige un turno de caja abierto.
+        const caja = await exigirCajaAbierta(tx);
         const sumaPagos = pagosNormalizados.reduce((acc, p) => addD4(acc, p.monto), 0n);
         for (const p of pagosNormalizados) {
           await tx.movimientos_caja.create({
@@ -268,6 +269,10 @@ export const createFactura = async (req: AuthRequest, res: Response) => {
 
     return res.status(201).json({ message: 'Factura registrada exitosamente', factura: resultado });
   } catch (error: any) {
-    return res.status(400).json({ error: error.message || 'Error al procesar la venta' });
+    const status = typeof error?.status === 'number' ? error.status : 400;
+    return res.status(status).json({
+      error: error.message || 'Error al procesar la venta',
+      ...(status === 409 ? { tipo: 'CAJA_CERRADA' } : {})
+    });
   }
 };

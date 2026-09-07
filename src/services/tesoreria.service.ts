@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { asegurarCajaPrincipal } from '../utils/caja';
+import { exigirCajaAbierta, asegurarCajaPrincipal } from '../utils/caja';
 
 const prisma = new PrismaClient();
 
@@ -77,7 +77,7 @@ export const TesoreriaService = {
       const cxp = await tx.cuentas_por_pagar.findUnique({ where: { CxP_ID: cxpId } });
       if (!cxp) throw new Error('Cuenta por pagar no encontrada');
 
-      const caja = await asegurarCajaPrincipal(tx);
+      const caja = await exigirCajaAbierta(tx);
       const nuevoMontoPagado = Number(cxp.Monto_Pagado) + monto;
       const nuevoSaldo = Number(cxp.Monto_Total) - nuevoMontoPagado;
       const nuevoEstatus = nuevoSaldo <= 0 ? 'Pagada' : 'Pendiente';

@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../config/db';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import { toD4, addD4, mulD4, divD4, aDecimal } from '../utils/dinero';
-import { asegurarCajaPrincipal } from '../utils/caja';
+import { exigirCajaAbierta } from '../utils/caja';
 
 // ── Proveedor por defecto para compras informales/locales ───────────────────
 const PROVEEDOR_INFORMAL_RIF = 'J-000000000';
@@ -170,7 +170,8 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
       // Contado → EGRESO en caja por el costo total de la compra.
       // Crédito → obligación en cuentas_por_pagar (caja sin cambios).
       if (Forma_Pago === 'Contado') {
-        const caja = await asegurarCajaPrincipal(tx);
+        // Regla de negocio (arqueo): compras en contado exigen caja abierta.
+        const caja = await exigirCajaAbierta(tx);
         await tx.movimientos_caja.create({
           data: {
             Caja_ID: caja.Caja_ID,
@@ -208,6 +209,12 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
     if (typeof error?.message === 'string' && error.message.startsWith('VALIDACION:')) {
       return res.status(400).json({ message: error.message.replace('VALIDACION:', '') });
     }
-    return res.status(400).json({ message: 'Error al procesar la entrada de mercancía', error: error.message });
+    // Caja cerrada → 409 para que el cliente bloquee la entrada de mercancía
+    const status = typeof error?.status === 'number' ? error.status : 400;
+    return res.status(status).json({
+      message: status === 409 ? error.message : 'Error al procesar la entrada de mercancía',
+      ...(status === 409 ? { tipo: 'CAJA_CERRADA' } : {}),
+      ...(status === 400 && !error.message.startsWith('VALIDACION:') ? { error: error.message } : {})
+    });
   }
 };

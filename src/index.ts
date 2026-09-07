@@ -11,6 +11,9 @@ import facturasRoutes from './routes/facturas.routes';
 import dashboardRoutes from './routes/dashboard.routes';
 import scrapingRoutes from './routes/scraping.routes';
 import tesoreriaRoutes from './routes/tesoreria.routes';
+import cajaRoutes from './routes/caja.routes';
+import seniatRoutes from './routes/seniat.routes';
+import { obtenerTasaCambio } from './controllers/tasa.controllers';
 import { getHealth } from './controllers/health.controllers';
 
 dotenv.config();
@@ -27,10 +30,8 @@ app.get('/', (req, res) => {
   res.json({ status: 'OK', message: 'API Backend Adrialga conectada y operativa' });
 });
 
-// Endpoint global para Tasa de Cambio
-app.get('/api/tasa-cambio', (req, res) => {
-  res.json({ tasa: 36.50 });
-});
+// Tasa de cambio BCV en vivo (scraper Python + persistencia en tasas_bcv)
+app.get('/api/tasa-cambio', obtenerTasaCambio);
 
 // Rutas de autenticación
 app.use('/api/auth', authRoutes);
@@ -52,6 +53,10 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/scraping', scrapingRoutes);
 // Rutas de tesorería, caja y cuentas por pagar
 app.use('/api/tesoreria', tesoreriaRoutes);
+// Rutas de apertura/cierre de caja (arqueo, turnos)
+app.use('/api/caja', cajaRoutes);
+// Rutas de reportes fiscales SENIAT (libro de ventas, compras, resumen IVA)
+app.use('/api/seniat', seniatRoutes);
 
 // Healthcheck de producción (sin auth, consulta liviana SELECT 1 a MySQL)
 app.get('/api/health', getHealth);
