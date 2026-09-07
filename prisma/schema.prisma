@@ -217,6 +217,16 @@ model cuentas_por_pagar {
   @@index([Estatus], map: "IDX_CxP_Estatus")
 }
 
+// Contadores secuenciales fiscales (número de control SENIAT).
+// Cada fila guarda una serie: p.ej. Clave="CTRL-VENTAS-2026", Valor=n.
+// El incremento es atómico (upsert + increment) dentro de la transacción de
+// la factura, garantizando secuencia única sin huecos por carrera.
+model contadores_fiscales {
+  Id    Int    @id @default(autoincrement())
+  Clave String @unique(map: "UQ_Contadores_Clave") @db.VarChar(60)
+  Valor Int    @default(0)
+}
+
 // Histórico de la tasa oficial BCV: una fila por jornada (Fecha es única).
 // Fuente: microservicio Python-Scrappers (bcv.org.ve). El endpoint público
 // /api/tasa-cambio persiste la tasa del día y usa la última registrada como
