@@ -71,9 +71,13 @@ export const getEstadoCaja = async (_req: Request, res: Response) => {
  * POST /api/caja/abrir
  * body: { montoInicial?: number, observacion?: string }
  *
- * Abre un nuevo turno de caja. Si existe un turno activo lo cierra primero
- * (arqueo automático de seguridad). El monto inicial se registra como INGRESO
- * manual y define el Saldo_Inicial/Saldo_Actual del turno.
+ * Abre un nuevo turno de caja con **periodicidad forzada**:
+ *  - No se permite abrir si existe un turno ABIERTA (409: ciérrelo primero).
+ *  - No se permite abrir más de un turno por jornada UTC (409).
+ *  - Un turno ya registrado hoy tampoco se cierra automáticamente: el arqueo
+ *    es una obligación del cajero, nunca una acción silenciosa del sistema.
+ * El monto inicial se registra como INGRESO manual y define el
+ * Saldo_Inicial/Saldo_Actual del turno.
  */
 export const abrirCaja = async (req: Request, res: Response) => {
   try {
@@ -82,21 +86,29 @@ export const abrirCaja = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'El monto inicial no puede ser negativo' });
     }
 
-    const caja = await prisma.$transaction(async (tx) => {
-      // 1. Cerrar cualquier turno activo pendiente (evita dobles turnos).
-      const activa = await obtenerCajaAbierta(tx as any);
-      if (activa) {
-        await tx.caja.update({
-          where: { Caja_ID: activa.Caja_ID },
-          data: {
-            Activa: false,
-            Estado: 'CERRADA',
-            Fecha_Cierre: new Date()
-          }
-        });
-      }
+    // ── Periodicidad forzada (validaciones previas a la transacción) ────────
+    const activa = await obtenerCajaAbierta(prisma as any);
+    if (activa) {
+      return res.status(409).json({
+        error: `Ya existe un turno de caja abierto (apertura ${activa.Fecha_Apertura.toISOString().slice(0, 10)}). Realice el cierre/arqueo antes de abrir uno nuevo.`,
+        caja: sanitizarCaja(activa),
+      });
+    }
+    const inicioJornada = new Date();
+    inicioJornada.setUTCHours(0, 0, 0, 0);
+    const turnoHoy = await prisma.caja.findFirst({
+      where: { Fecha_Apertura: { gte: inicioJornada } },
+      orderBy: { Fecha_Apertura: 'desc' },
+    });
+    if (turnoHoy) {
+      return res.status(409).json({
+        error: `Ya se registró una apertura de caja en la jornada de hoy (turno #${turnoHoy.Caja_ID}, estado ${turnoHoy.Estado}). Solo se permite un turno por día.`,
+        caja: sanitizarCaja(turnoHoy),
+      });
+    }
 
-      // 2. Nuevo turno.
+    const caja = await prisma.$transaction(async (tx) => {
+      // Nuevo turno.
       const nueva = await tx.caja.create({
         data: {
           Nombre: 'Caja Principal',
@@ -200,6 +212,69 @@ export const cerrarCaja = async (req: Request, res: Response) => {
       caja: sanitizarCaja({ ...cerrada, Saldo_Actual: 0 }),
       saldoEntregado: Number(saldoActual.toFixed(4))
     });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * GET /api/caja/historico?anio=&mes=
+ *
+ * Reporte de arqueos del mes: cada turno (abierto o cerrado) con su
+ * saldo inicial, ingresos, egresos operativos, saldo esperado, saldo
+ * entregado al cierre y la diferencia (faltante/sobrante).
+ * Los EGRESOS con concepto que inicia con "Cierre de caja" se interpretan
+ * como entrega del efectivo al cierre (no como egresos operativos).
+ */
+export const getHistoricoArqueos = async (req: Request, res: Response) => {
+  try {
+    const ahora = new Date();
+    let anio = Number(req.query.anio ?? ahora.getUTCFullYear());
+    let mes = Number(req.query.mes ?? ahora.getUTCMonth() + 1);
+    if (!Number.isInteger(anio) || anio < 2000 || anio > 2100) anio = ahora.getUTCFullYear();
+    if (!Number.isInteger(mes) || mes < 1 || mes > 12) mes = ahora.getUTCMonth() + 1;
+
+    const desde = new Date(Date.UTC(anio, mes - 1, 1));
+    const hasta = new Date(Date.UTC(anio, mes, 1));
+
+    const turnos = await prisma.caja.findMany({
+      where: { Fecha_Apertura: { gte: desde, lt: hasta } },
+      include: { movimientos: true },
+      orderBy: { Fecha_Apertura: 'desc' },
+    });
+
+    const filas = turnos.map((t) => {
+      let ingresos = 0;
+      let egresosOperativos = 0;
+      let saldoEntregado = 0;
+      for (const m of t.movimientos) {
+        const monto = Number(m.Monto_USD);
+        if (m.Tipo === 'INGRESO') {
+          ingresos += monto;
+        } else if (m.Tipo === 'EGRESO') {
+          if ((m.Concepto ?? '').startsWith('Cierre de caja')) saldoEntregado += monto;
+          else egresosOperativos += monto;
+        }
+      }
+      const saldoInicial = Number(t.Saldo_Inicial);
+      const saldoEsperado = saldoInicial + ingresos - egresosOperativos;
+      return {
+        turnoId: t.Caja_ID,
+        estado: t.Estado,
+        apertura: t.Fecha_Apertura.toISOString(),
+        cierre: t.Fecha_Cierre ? t.Fecha_Cierre.toISOString() : null,
+        saldoInicial: Number(saldoInicial.toFixed(4)),
+        ingresos: Number(ingresos.toFixed(4)),
+        egresosOperativos: Number(egresosOperativos.toFixed(4)),
+        saldoEsperado: Number(saldoEsperado.toFixed(4)),
+        saldoEntregado: Number(saldoEntregado.toFixed(4)),
+        // >0 → faltante (entregó menos); <0 → sobrante (entregó de más)
+        diferencia: Number((saldoEsperado - saldoEntregado).toFixed(4)),
+        movimientos: t.movimientos.length,
+      };
+    });
+
+    res.json({ anio, mes, total: filas.length, filas });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

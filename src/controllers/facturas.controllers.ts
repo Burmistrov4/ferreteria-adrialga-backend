@@ -5,6 +5,24 @@ import { normalizarPeriodo, calcularRango, rangoPersonalizado } from '../utils/f
 import { toD4, addD4, mulD4, divD4, aDecimal, IVA_ALIQUOTA, IGTF_ALIQUOTA, CIEN } from '../utils/dinero';
 import { exigirCajaAbierta } from '../utils/caja';
 
+/**
+ * Asigna el siguiente Número de Control fiscal (formato 00-00-XXXXXXXX).
+ * El contador es una fila de `contadores_fiscales` incrementada atómicamente
+ * dentro de la transacción de la factura (upsert + increment): garantiza
+ * secuencia única sin huecos ni duplicados ante ventas concurrentes.
+ * La serie reinicia por año natural (CTRL-VENTAS-<anio>).
+ */
+async function asignarNumeroControl(tx: any): Promise<string> {
+  const anio = new Date().getUTCFullYear();
+  const clave = `CTRL-VENTAS-${anio}`;
+  const contador = await tx.contadores_fiscales.upsert({
+    where: { Clave: clave },
+    create: { Clave: clave, Valor: 1 },
+    update: { Valor: { increment: 1 } },
+  });
+  return `00-00-${String(contador.Valor).padStart(8, '0')}`;
+}
+
 // Métodos de pago considerados en divisas extranjeras (base del IGTF 3%).
 // Todo lo demás (VES, Pago Móvil, Punto de Venta) se asume en bolívares.
 const METODOS_DIVISA = ['efectivo usd', 'zelle', 'efectivo (usd)', 'divisas'];
@@ -182,8 +200,9 @@ export const createFactura = async (req: AuthRequest, res: Response) => {
       }
 
       // 3. Crear cabecera y detalles de la factura (montos exactos a 4 decimales)
-      const numeroControl =
-        Numero_Control || `FV-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}`;
+      // ── Numeración fiscal SENIAT: si el cliente no envía Número de Control,
+      // se asigna la secuencia transaccional 00-00-XXXXXXXX por año.
+      const numeroControl = Numero_Control || (await asignarNumeroControl(tx));
 
       const nuevaFactura = await tx.facturas.create({
         data: {
