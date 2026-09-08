@@ -77,27 +77,33 @@ model usuarios {
 }
 
 model facturas {
-  Factura_ID       Int                @id @default(autoincrement())
-  Numero_Control   String?            @unique(map: "Numero_Control") @db.VarChar(50)
-  Fecha_Emision    DateTime           @default(now()) @db.Timestamp(0)
-  Subtotal         Decimal            @default(0.0000) @db.Decimal(12, 4)
-  Total_IVA        Decimal            @default(0.0000) @db.Decimal(12, 4)
-  Total_General    Decimal            @default(0.0000) @db.Decimal(12, 4)
+  Factura_ID          Int                @id @default(autoincrement())
+  Numero_Control      String?            @unique(map: "Numero_Control") @db.VarChar(50)
+  Fecha_Emision       DateTime           @default(now()) @db.Timestamp(0)
+  Subtotal            Decimal            @default(0.0000) @db.Decimal(12, 4)
+  Total_IVA           Decimal            @default(0.0000) @db.Decimal(12, 4)
+  Total_General       Decimal            @default(0.0000) @db.Decimal(12, 4)
   // Tasa BCV histórica obligatoria usada al momento de la emisión (4 decimales).
   // Default temporal 1.0 para sincronización con Railway (rellena filas existentes).
-  Tasa_Cambio      Decimal            @default(1.0) @db.Decimal(12, 4)
-  Monto_IGTF       Decimal            @default(0.0000) @db.Decimal(12, 4)
-  Estatus          String             @default("Completada") @db.VarChar(20)
-  Cliente_ID       Int
-  Usuario_ID       Int
-  detalle_facturas detalle_facturas[]
-  clientes         clientes           @relation(fields: [Cliente_ID], references: [Cliente_ID], map: "FK_Facturas_Clientes")
-  usuarios         usuarios           @relation(fields: [Usuario_ID], references: [Usuario_ID], map: "FK_Facturas_Usuarios")
-  pagos            pagos[]
+  Tasa_Cambio         Decimal            @default(1.0) @db.Decimal(12, 4)
+  Monto_IGTF          Decimal            @default(0.0000) @db.Decimal(12, 4)
+  Estatus             String             @default("Completada") @db.VarChar(20)
+  // Tipo de comprobante fiscal: FACTURA | NOTA_CREDITO (P0.4).
+  Tipo_Documento      String?            @default("FACTURA") @db.VarChar(20)
+  // Para NOTA_CREDITO apunta al Factura_ID original afectado.
+  Factura_Afectada_ID Int?
+  Cliente_ID          Int
+  Usuario_ID          Int
+  detalle_facturas    detalle_facturas[]
+  clientes            clientes           @relation(fields: [Cliente_ID], references: [Cliente_ID], map: "FK_Facturas_Clientes")
+  usuarios            usuarios           @relation(fields: [Usuario_ID], references: [Usuario_ID], map: "FK_Facturas_Usuarios")
+  pagos               pagos[]
 
   @@index([Cliente_ID], map: "FK_Facturas_Clientes")
   @@index([Usuario_ID], map: "FK_Facturas_Usuarios")
   @@index([Fecha_Emision], map: "IDX_Facturas_Fecha")
+  @@index([Tipo_Documento], map: "IDX_Facturas_TipoDoc")
+  @@index([Factura_Afectada_ID], map: "IDX_Facturas_Afectada")
 }
 
 model detalle_facturas {

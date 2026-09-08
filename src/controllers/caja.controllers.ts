@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../config/db';
 import { toD4, aDecimal } from '../utils/dinero';
 import { obtenerCajaAbierta } from '../utils/caja';
+import { evaluarArqueo } from '../utils/arqueo';
 
 // Prisma devuelve DECIMAL como objetos Decimal; se normalizan a Number.
 const decToNumber = (v: any): number | null =>
@@ -82,8 +83,10 @@ export const getEstadoCaja = async (_req: Request, res: Response) => {
 export const abrirCaja = async (req: Request, res: Response) => {
   try {
     const montoInicialD4 = toD4(req.body.montoInicial ?? 0);
-    if (montoInicialD4 < 0n) {
-      return res.status(400).json({ error: 'El monto inicial no puede ser negativo' });
+    if (montoInicialD4 <= 0n) {
+      return res.status(400).json({
+        error: 'El fondo base de caja debe ser mayor a $0.00 para abrir el turno',
+      });
     }
 
     // ── Periodicidad forzada (validaciones previas a la transacción) ────────
@@ -164,19 +167,18 @@ export const cerrarCaja = async (req: Request, res: Response) => {
     const saldoActual = Number(caja.Saldo_Actual);
     const montoContado = req.body.montoContado == null
       ? null
-      : toD4(req.body.montoContado);
-    const montoContadoNum = montoContado === null ? null : Number(aDecimal(montoContado));
+      : Number(aDecimal(toD4(req.body.montoContado)));
 
-    if (montoContadoNum !== null) {
-      const diferencia = Math.abs(montoContadoNum - saldoActual);
-      const TOLERANCIA = 1.0; // ±1 USD por redondeo/moneda menor
-      if (diferencia > TOLERANCIA) {
-        return res.status(422).json({
-          error: `El arqueo no cuadra: el conteo ($${montoContadoNum.toFixed(2)}) difiere del saldo en caja ($${saldoActual.toFixed(2)}) en más de $1.00. Revise antes de cerrar.`,
-          saldoActual,
-          montoContado: montoContadoNum
-        });
-      }
+    // ── Regla de negocio: el conteo debe cuadrar dentro de ±1 USD ────────────
+    // Lógica pura extraída a src/utils/arqueo.ts (testeable sin BD).
+    const { cuadra, diferencia } = evaluarArqueo(saldoActual, montoContado);
+    if (!cuadra) {
+      return res.status(422).json({
+        error: `El arqueo no cuadra: el conteo ($${(saldoActual - diferencia).toFixed(2)}) difiere del saldo en caja ($${saldoActual.toFixed(2)}) en más de $1.00. Revise antes de cerrar.`,
+        saldoActual,
+        montoContado,
+        diferencia,
+      });
     }
 
     const saldoD4 = toD4(saldoActual);
