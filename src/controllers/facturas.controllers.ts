@@ -3,7 +3,19 @@ import { prisma } from '../config/db';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import { normalizarPeriodo, calcularRango, rangoPersonalizado } from '../utils/fechas';
 import { toD4, addD4, mulD4, divD4, aDecimal, IVA_ALIQUOTA, IGTF_ALIQUOTA, CIEN } from '../utils/dinero';
-import { exigirCajaAbierta } from '../utils/caja';
+import { exigirCajaAbierta, CajaCerradaError } from '../utils/caja';
+
+/**
+ * Error semántico: la gaveta no cubre la devolución (regla CERO DÉFICIT).
+ * Serializa como HTTP 400 para que el cajero solicite un Ingreso de Caja.
+ */
+export class ReversionSaldoError extends Error {
+  public status = 400;
+  constructor(message: string) {
+    super(message);
+    this.name = 'ReversionSaldoError';
+  }
+}
 
 /**
  * Asigna el siguiente Número de Control fiscal (formato 00-00-XXXXXXXX).
@@ -15,6 +27,22 @@ import { exigirCajaAbierta } from '../utils/caja';
 async function asignarNumeroControl(tx: any): Promise<string> {
   const anio = new Date().getUTCFullYear();
   const clave = `CTRL-VENTAS-${anio}`;
+  const contador = await tx.contadores_fiscales.upsert({
+    where: { Clave: clave },
+    create: { Clave: clave, Valor: 1 },
+    update: { Valor: { increment: 1 } },
+  });
+  return `00-00-${String(contador.Valor).padStart(8, '0')}`;
+}
+
+/**
+ * Asigna el Número de Control de una Nota de Crédito usando una serie
+ * INDEPENDIENTE (CTRL-NC-<anio>), como exige el SENIAT: las NC llevan
+ * correlativo de control propio, aislado de las facturas regulares.
+ */
+async function asignarNCControl(tx: any): Promise<string> {
+  const anio = new Date().getUTCFullYear();
+  const clave = `CTRL-NC-${anio}`;
   const contador = await tx.contadores_fiscales.upsert({
     where: { Clave: clave },
     create: { Clave: clave, Valor: 1 },
@@ -293,5 +321,148 @@ export const createFactura = async (req: AuthRequest, res: Response) => {
       error: error.message || 'Error al procesar la venta',
       ...(status === 409 ? { tipo: 'CAJA_CERRADA' } : {})
     });
+  }
+};
+
+/**
+ * POST /facturas/:id/reversar
+ * Anulación fiscalmente correcta (P0.4). Ejecuta en UNA transacción ACID:
+ *   A) Crea la Nota de Crédito fiscal (montos en negativo, serie CTRL-NC-<año>).
+ *   B) Marca la factura original como REVERSADA (bloquea dobles devoluciones).
+ *   C) Restituye el inventario recalculando el CMP a costo histórico con BigInt.
+ *   D) Asienta los egresos en caja espejando los pagos originales y descuenta el
+ *      saldo de gaveta, bloqueando el déficit (regla CERO DÉFICIT).
+ * Si cualquier paso falla, el rollback completo evita descuadres fiscales/inventario.
+ */
+export const reversarVenta = async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+  const Usuario_ID = req.user?.usuarioId;
+  if (!Usuario_ID) {
+    return res.status(401).json({ message: 'Token sin identificación de usuario' });
+  }
+
+  try {
+    const facturaOriginal = await prisma.facturas.findUnique({
+      where: { Factura_ID: Number(id) },
+      include: { detalle_facturas: true, pagos: true }
+    });
+
+    // ── Gatekeepers previos a la transacción ─────────────────────────────────
+    if (!facturaOriginal) {
+      return res.status(404).json({ error: 'Factura no encontrada' });
+    }
+    if (facturaOriginal.Estatus === 'Reversada') {
+      return res.status(400).json({ error: 'La factura ya fue reversada' });
+    }
+    if (facturaOriginal.Estatus !== 'Pagada' && facturaOriginal.Estatus !== 'Completada') {
+      return res.status(400).json({
+        error: `La factura no es reversible (Estatus: ${facturaOriginal.Estatus})`
+      });
+    }
+    if ((facturaOriginal.Tipo_Documento ?? 'FACTURA') === 'NOTA_CREDITO') {
+      return res.status(400).json({ error: 'Una Nota de Crédito no puede ser reversada' });
+    }
+
+    const resultado = await prisma.$transaction(async (tx) => {
+      // A. Turno de caja abierto obligatorio.
+      const caja = await exigirCajaAbierta(tx);
+
+      // Total a devolver y verificación de fondo (CERO DÉFICIT).
+      const refundD4 = facturaOriginal.pagos.reduce(
+        (acc, p) => addD4(acc, toD4(p.Monto)),
+        0n
+      );
+      if (refundD4 > toD4(caja.Saldo_Actual)) {
+        throw new ReversionSaldoError(
+          `Saldo insuficiente en caja: la devolución de ${aDecimal(refundD4)} USD excede el saldo disponible de ${Number(caja.Saldo_Actual).toFixed(2)} USD. ` +
+          `Solicite un Ingreso de Caja al supervisor antes de procesar la devolución.`
+        );
+      }
+
+      // B. Nota de Crédito: montos en NEGATIVO, Tipo_Documento y serie propios.
+      const ncControl = await asignarNCControl(tx);
+      const neg = (v: unknown) => -toD4(v);
+      const nc = await tx.facturas.create({
+        data: {
+          Cliente_ID: facturaOriginal.Cliente_ID,
+          Usuario_ID,
+          Numero_Control: ncControl,
+          Subtotal: aDecimal(neg(facturaOriginal.Subtotal)),
+          Total_IVA: aDecimal(neg(facturaOriginal.Total_IVA)),
+          Total_General: aDecimal(neg(facturaOriginal.Total_General)),
+          Monto_IGTF: aDecimal(neg(facturaOriginal.Monto_IGTF)),
+          Tasa_Cambio: aDecimal(toD4(facturaOriginal.Tasa_Cambio)),
+          Estatus: 'Emitida',
+          Tipo_Documento: 'NOTA_CREDITO',
+          Factura_Afectada_ID: facturaOriginal.Factura_ID
+        }
+      });
+
+      // C. Mutar la original a REVERSADA.
+      await tx.facturas.update({
+        where: { Factura_ID: facturaOriginal.Factura_ID },
+        data: { Estatus: 'Reversada' }
+      });
+
+      // D. Restituir inventario + recálculo de CMP a costo histórico (BigInt).
+      for (const item of facturaOriginal.detalle_facturas) {
+        const prod = await tx.productos.findUnique({
+          where: { Producto_ID: item.Producto_ID }
+        });
+        const stockActual = toD4(prod?.Stock_Actual ?? 0);
+        const cantidad = toD4(item.Cantidad);
+        const cmp = toD4(prod?.Costo_Promedio);
+        const costoHist = toD4(item.Costo_Unitario_Historico);
+        const stockNuevo = addD4(stockActual, cantidad);
+        // CMP_nuevo = (Stock*CMP + Cant*CostoHist) / (Stock + Cant)
+        const nuevoCMP = stockNuevo > 0n
+          ? divD4(addD4(mulD4(cmp, stockActual), mulD4(costoHist, cantidad)), stockNuevo)
+          : costoHist;
+        await tx.productos.update({
+          where: { Producto_ID: item.Producto_ID },
+          data: {
+            Stock_Actual: { increment: item.Cantidad },
+            Costo_Promedio: aDecimal(nuevoCMP)
+          }
+        });
+      }
+
+      // E. Egresos en caja (espejo de los pagos originales) + descuento de saldo.
+      const sumaPagos = facturaOriginal.pagos.reduce(
+        (acc, p) => addD4(acc, toD4(p.Monto)),
+        0n
+      );
+      for (const p of facturaOriginal.pagos) {
+        await tx.movimientos_caja.create({
+          data: {
+            Caja_ID: caja.Caja_ID,
+            Tipo: 'EGRESO',
+            Concepto: `Reversión F-${facturaOriginal.Numero_Control ?? facturaOriginal.Factura_ID} NC-${ncControl}`,
+            Metodo_Pago: p.Metodo_Pago,
+            Monto_USD: aDecimal(toD4(p.Monto)),
+            Tasa_Cambio: aDecimal(toD4(p.Tasa_Cambio ?? facturaOriginal.Tasa_Cambio)),
+            Referencia: p.Referencia,
+            Origen_Tipo: 'factura',
+            Origen_ID: facturaOriginal.Factura_ID
+          }
+        });
+      }
+      await tx.caja.update({
+        where: { Caja_ID: caja.Caja_ID },
+        data: { Saldo_Actual: { decrement: aDecimal(sumaPagos) } }
+      });
+
+      return nc;
+    });
+
+    return res.status(201).json({ message: 'Venta reversada correctamente', notaCredito: resultado });
+  } catch (error: any) {
+    if (error instanceof CajaCerradaError) {
+      return res.status(error.status).json({ error: error.message, tipo: 'CAJA_CERRADA' });
+    }
+    if (error instanceof ReversionSaldoError) {
+      return res.status(error.status).json({ error: error.message, tipo: 'SALDO_INSUFICIENTE' });
+    }
+    return res.status(400).json({ error: error.message || 'Error al reversar la venta' });
   }
 };

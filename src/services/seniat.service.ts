@@ -17,13 +17,16 @@ export interface FilaLibroVentas {
   razonSocial: string;
   // Ventas exentas y/o sin derecho a crédito fiscal (diferenciadas del gravamen)
   baseExentaUsd: number;
-  baseImponibleUsd: number; // base gravada (16%)
+  baseImponibleUsd: number; // base gravada (16%) — NEGATIVA en Notas de Crédito
   alicuota: number; // 16 IVA | 0 si exenta
-  ivaDebitoUsd: number;
+  ivaDebitoUsd: number; // NEGATIVO en Notas de Crédito
   igtfUsd: number; // 3% sobre pagos en divisas (Impuesto a las Grandes Transacciones)
-  totalUsd: number;
+  totalUsd: number; // NEGATIVO en Notas de Crédito
   tasaBcv: number;
   totalBs: number;
+  // P0.4: tipo de comprobante y factura afectada (solo NC).
+  tipoDocumento: 'FACTURA' | 'NOTA_CREDITO';
+  facturaAfectada: string | null;
 }
 
 export interface FilaLibroCompras {
@@ -74,22 +77,35 @@ function fechaISO(d: Date): string {
 export const SeniatService = {
   async libroVentas(anio: number, mes: number): Promise<FilaLibroVentas[]> {
     const { desde, hasta } = rangoMes(anio, mes);
+    // Incluye facturas regulares (Pagada/Completada) y Notas de Crédito (Emitida)
+    // para que las fechas/importes negativos de las NC resten en la declaración.
     const facturas = await prisma.facturas.findMany({
-      where: { Fecha_Emision: { gte: desde, lt: hasta }, Estatus: 'Completada' },
-      include: { clientes: true },
+      where: {
+        Fecha_Emision: { gte: desde, lt: hasta },
+        Estatus: { in: ['Completada', 'Pagada', 'Emitida'] }
+      },
+      include: {
+        clientes: true,
+        // Para resolver el Número de Control de la factura afectada por una NC.
+        // (Relación opcional negada manualmente por FK no mapeada; se consulta aparte.)
+      },
       orderBy: { Fecha_Emision: 'asc' },
     });
 
+    // Mapa Factura_ID → Numero_Control para resolver la "factura afectada" (NC).
+    const controles = new Map<number, string>();
+    for (const f of facturas) controles.set(f.Factura_ID, f.Numero_Control ?? '');
+
     return facturas.map((f, i) => {
+      const esNC = (f.Tipo_Documento ?? 'FACTURA') === 'NOTA_CREDITO' || f.Estatus === 'Emitida';
       const base = num(f.Subtotal);
       const iva = num(f.Total_IVA);
       const igtf = num(f.Monto_IGTF);
       const total = num(f.Total_General);
       const tasa = num(f.Tasa_Cambio);
-      // Deriva de la base gravada a partir del IVA alícuota general 16%.
-      // La porción del total que no responde a esa alícuota se reporta como
-      // exenta/ sin crédito (p. ej. consumos sin gravamen).
-      const baseGravada = iva > 0 ? (iva * 100) / 16 : 0;
+      // Base gravada derivada del IVA (16%); NEGATIVA en NC. Si no hay IVA (exento)
+      // la base gravada es 0 y el rubro exento conserva su signo.
+      const baseGravada = iva !== 0 ? (iva * 100) / 16 : 0;
       return {
         operacion: i + 1,
         fecha: fechaISO(f.Fecha_Emision),
@@ -97,14 +113,18 @@ export const SeniatService = {
         numeroControl: f.Numero_Control ?? '',
         rifCliente: f.clientes.RIF_Cedula,
         razonSocial: f.clientes.Razon_Social,
-        baseExentaUsd: Math.max(0, base - baseGravada),
+        baseExentaUsd: esNC ? 0 : Math.max(0, base - baseGravada),
         baseImponibleUsd: baseGravada,
-        alicuota: iva > 0 ? 16 : 0,
+        alicuota: iva !== 0 ? 16 : 0,
         ivaDebitoUsd: iva,
         igtfUsd: igtf,
         totalUsd: total,
         tasaBcv: tasa,
         totalBs: Number((total * tasa).toFixed(2)),
+        tipoDocumento: esNC ? 'NOTA_CREDITO' : 'FACTURA',
+        facturaAfectada: esNC
+          ? (controles.get(f.Factura_Afectada_ID ?? -1) ?? '')
+          : null,
       };
     });
   },

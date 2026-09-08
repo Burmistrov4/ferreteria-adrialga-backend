@@ -16,6 +16,23 @@ function csv(encabezado: string[], filas: unknown[][]): string {
   return '\ufeff' + lineas.join('\n');
 }
 
+/** Escape RFC-4180 para delimitador punto y coma. */
+function escSC(v: unknown): string {
+  const s = v?.toString() ?? '';
+  return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/**
+ * CSV separado por PUNTO Y COMA (normativa SENIAT). Incluye BOM UTF-8 (\uFEFF)
+ * para que Excel en Windows no rompa caracteres latinos (ñ/acentos en Razón
+ * Social y RIF). Las filas terminan en CRLF.
+ */
+function csvSemicolon(encabezado: string[], filas: unknown[][]): string {
+  const lineas = [encabezado.map(escSC).join(';')];
+  for (const f of filas) lineas.push(f.map(escSC).join(';'));
+  return '\uFEFF' + lineas.join('\r\n');
+}
+
 /** Valida y normaliza anio/mes desde query params. */
 function periodo(req: Request): { anio: number; mes: number } {
   const ahora = new Date();
@@ -26,10 +43,14 @@ function periodo(req: Request): { anio: number; mes: number } {
   return { anio, mes };
 }
 
-const ENC_VENTAS = [
-  'N_Operacion', 'Fecha', 'Factura_ID', 'Numero_Control', 'RIF_Cliente',
-  'Razon_Social', 'Base_Exenta_USD', 'Base_Imponible_USD', 'Alicuota_%',
-  'IVA_Debito_USD', 'IGTF_USD', 'Total_USD', 'Tasa_BCV', 'Total_Bs',
+const ENC_VENTAS_BS = [
+  // Encabezado SENIAT en Bolívares (tasa BCV histórica) y delimitador ';'.
+  // Separación estructural de rubros exentos (Base_Exenta) y gravados
+  // (Base_Imponible), exigida por la Providencia. 15 columnas.
+  'N_Operacion', 'Fecha', 'RIF', 'Razon_Social', 'Nro_Factura',
+  'Nro_Control', 'Tipo_Documento', 'Nro_Factura_Afectada',
+  'Base_Exenta_Bs', 'Base_Imponible_Bs', 'Alicuota_%', 'IVA_Bs',
+  'IGTF_Bs', 'Retencion_IVA_Bs', 'Total_Venta_Bs',
 ];
 
 const ENC_COMPRAS = [
@@ -42,18 +63,35 @@ export const getLibroVentas = async (req: Request, res: Response) => {
     const { anio, mes } = periodo(req);
     const filas = await SeniatService.libroVentas(anio, mes);
     if (req.query.formato === 'csv') {
-      const cuerpo = filas.map((v) => [
-        v.operacion, v.fecha, v.facturaId, v.numeroControl, v.rifCliente,
-        v.razonSocial, v.baseExentaUsd.toFixed(2), v.baseImponibleUsd.toFixed(2),
-        v.alicuota, v.ivaDebitoUsd.toFixed(2), v.igtfUsd.toFixed(2),
-        v.totalUsd.toFixed(2), v.tasaBcv.toFixed(4), v.totalBs.toFixed(2),
-      ]);
+      // Extracción fiscal SENIAT en Bolívares usando la tasa BCV histórica de
+      // cada factura; columnas separadas por punto y coma (Excel/Profit/Saint).
+      const cuerpo = filas.map((v) => {
+        const t = v.tasaBcv || 0;
+        const red2 = (n: number) => n.toFixed(2);
+        return [
+          v.operacion,
+          v.fecha,
+          (v.rifCliente ?? '').toUpperCase(), // RIF con prefijo V/J/E/G
+          v.razonSocial,
+          v.facturaId,
+          v.numeroControl,
+          v.tipoDocumento, // FACTURA | NOTA_CREDITO (los montos negativos restan)
+          v.facturaAfectada ?? '', // Nro_Factura_Afectada (solo Notas de Crédito)
+          red2(v.baseExentaUsd * t), // Base_Exenta_Bs
+          red2(v.baseImponibleUsd * t), // Base_Imponible_Bs
+          v.alicuota, // Alicuota_%
+          red2(v.ivaDebitoUsd * t), // IVA_Bs
+          red2(v.igtfUsd * t), // IGTF_Bs
+          '0.00', // Retencion_IVA_Bs (módulo de retenciones aún no modelado)
+          red2(v.totalUsd * t), // Total_Venta_Bs
+        ];
+      });
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader(
         'Content-Disposition',
         `attachment; filename="libro_ventas_${anio}-${String(mes).padStart(2, '0')}.csv"`
       );
-      return res.send(csv(ENC_VENTAS, cuerpo));
+      return res.send(csvSemicolon(ENC_VENTAS_BS, cuerpo));
     }
     return res.json({ anio, mes, total: filas.length, filas });
   } catch (error: any) {

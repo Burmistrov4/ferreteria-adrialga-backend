@@ -1,5 +1,7 @@
 ﻿import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import authRoutes from './routes/auth.routes';
 import categoriasRoutes from './routes/categorias.routes';
@@ -21,8 +23,46 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middlewares
-app.use(cors());
+// ── Seguridad: headers HTTP seguros (X-Content-Type, X-Frame, HSTS, etc.) ──
+app.use(helmet());
+
+// ── CORS restringido: solo orígenes permitidos ──
+const ALLOWED_ORIGINS = [
+  'https://adrialga.vercel.app',          // Frontend producción (Vercel)
+  'https://adrialga-frontend.vercel.app', // Alias alternativo
+  'http://localhost:3000',                // Desarrollo local Flutter web
+  'http://localhost:5173',                // Vite dev
+];
+app.use(cors({
+  origin: (origin, callback) => {
+    // Permitir peticiones sin origen (apps móviles, Postman, curl)
+    if (!origin) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    callback(new Error(`CORS: origen no permitido: ${origin}`));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+
+// ── Rate limiting global: 100 peticiones / 15 min por IP ──
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiadas peticiones. Intenta de nuevo en 15 minutos.' },
+});
+app.use('/api/', limiter);
+
+// ── Rate limiting estricto para auth (prevenir fuerza bruta) ──
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: 'Demasiados intentos de inicio de sesión. Intenta en 15 minutos.' },
+});
+app.use('/api/auth/login', authLimiter);
+
 app.use(express.json());
 
 // Ruta base para comprobación en el navegador
