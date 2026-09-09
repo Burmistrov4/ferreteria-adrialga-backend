@@ -34,8 +34,14 @@ const ALLOWED_ORIGINS = [
   'http://localhost:5173',                // Vite dev
 ];
 
+// GitHub Pages: el frontend se sirve en https://<usuario>.github.io/...  La
+// cabecera Origin envía solo scheme+host, así que se permite cualquier
+// subdominio *.github.io (todos los sitios GitHub Pages).
+const esOrigenGitHubPages = (origin: string) =>
+  origin.startsWith('https://') && origin.endsWith('.github.io');
+
 // En desarrollo se permite CUALQUIER origen localhost (Flutter web usa un
-// puerto dinámico 5xxxx). En producción la lista sigue siendo estricta.
+// puerto dinámico 5xxxx).
 const esDesarrollo = (process.env.NODE_ENV ?? 'development') !== 'production';
 const esOrigenLocalDev = (origin: string) =>
   esDesarrollo &&
@@ -45,7 +51,9 @@ app.use(cors({
   origin: (origin, callback) => {
     // Permitir peticiones sin origen (apps móviles, Postman, curl)
     if (!origin) return callback(null, true);
-    if (esOrigenLocalDev(origin) || ALLOWED_ORIGINS.includes(origin)) {
+    if (esOrigenLocalDev(origin) ||
+        esOrigenGitHubPages(origin) ||
+        ALLOWED_ORIGINS.includes(origin)) {
       return callback(null, true);
     }
     callback(new Error(`CORS: origen no permitido: ${origin}`));

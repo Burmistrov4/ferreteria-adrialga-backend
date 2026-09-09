@@ -8,13 +8,34 @@ async function main() {
     where: { Credencial: 'admin' },
     update: {
       Password: hashedPassword,
-      Activo: true
+      Activo: true,
+      Rol: 'ADMIN'
     },
     create: {
       Credencial: 'admin',
       Nombre: 'Administrador del Sistema',
       Password: hashedPassword,
       Rol: 'ADMIN',
+      Activo: true
+    }
+  });
+
+  // SUPERVISOR por defecto con PIN de operación (autorización de reversiones).
+  const hashedSupervisorPassword = await hashPassword('supervisor');
+  const supervisor = await prisma.usuarios.upsert({
+    where: { Credencial: 'supervisor' },
+    update: {
+      Password: hashedSupervisorPassword,
+      Activo: true,
+      Rol: 'SUPERVISOR',
+      PIN_Operaciones: '1234'
+    },
+    create: {
+      Credencial: 'supervisor',
+      Nombre: 'Supervisor de Caja',
+      Password: hashedSupervisorPassword,
+      Rol: 'SUPERVISOR',
+      PIN_Operaciones: '1234',
       Activo: true
     }
   });
@@ -33,6 +54,11 @@ async function main() {
   console.log('✅ Cliente Consumidor Final listo:', clienteConsumidor.RIF_Cedula);
 
   console.log('✅ Usuario Admin listo:', usuario.Credencial);
+  console.log(
+    '✅ Usuario Supervisor listo:',
+    supervisor.Credencial,
+    '(PIN operación: 1234)'
+  );
 }
 
 main()
