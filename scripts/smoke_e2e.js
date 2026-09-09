@@ -72,9 +72,10 @@ const assert = (cond, msg) => {
       data: { RIF_Cedula: 'V-99999999', Razon_Social: 'Cliente "Prueba", S.A. (E2E)' }
     });
   }
-  const tasaRes = await (await fetch(`${BASE}/scraping/bcv`, { headers: auth })).json();
+  const tasaRes = await (await fetch(`${BASE}/tasa-cambio`, { headers: auth })).json();
   const tasa = Number(tasaRes.tasa);
-  assert(tasa > 0, `Tasa BCV del microservicio: ${tasa}`);
+  assert(Number.isFinite(tasa) && tasa > 0,
+    `Tasa BCV segura (finita y >0): ${tasa} (fuente: ${tasaRes.fuente ?? 'fallback'})`);
 
   const cmpAntesVenta = Number(p1.Costo_Promedio);
   const facRes = await (await fetch(`${BASE}/facturas`, {
@@ -167,6 +168,65 @@ const assert = (cond, msg) => {
     })
   })).json();
   assert(!!ventaCero.factura, `Venta con CMP=0 sin excepción (Factura ID ${ventaCero.factura?.Factura_ID})`);
+
+  // ── 8. Reversión de Venta (P0.4) — Nota de Crédito + stock/CMP + caja ──
+  const ncSerie = new RegExp(/^NC-\d{4}-\d{8}$/);
+  const cajaActiva = await prisma.caja.findFirst({ where: { Activa: true } });
+  assert(!!cajaActiva, `Caja activa disponible para la reversión (ID ${cajaActiva?.Caja_ID})`);
+  const saldoPrevio = Number(cajaActiva.Saldo_Actual);
+  const stockPreReversion =
+    (await prisma.productos.findUnique({ where: { Producto_ID: prodId } })).Stock_Actual;
+
+  // 8a. Déficit de caja (saldo $0) → HTTP 400 SALDO_INSUFICIENTE + ROLLBACK ACID
+  await prisma.caja.update({
+    where: { Caja_ID: cajaActiva.Caja_ID },
+    data: { Saldo_Actual: 0 }
+  });
+  const reversionDeficit = await fetch(`${BASE}/facturas/${facturaId}/reversar`, {
+    method: 'POST', headers: auth, body: JSON.stringify({})
+  });
+  assert(reversionDeficit.status === 400,
+    `Reversión con saldo $0 → HTTP ${reversionDeficit.status} (SALDO_INSUFICIENTE)`);
+  const deficitBody = await reversionDeficit.json();
+  assert(deficitBody.tipo === 'SALDO_INSUFICIENTE', `Body tipo=SALDO_INSUFICIENTE (${deficitBody.tipo})`);
+  const factTrasDeficit = await prisma.facturas.findUnique({ where: { Factura_ID: facturaId } });
+  assert(factTrasDeficit.Estatus === 'Pagada',
+    `Rollback: la factura sigue "Pagada" tras rechazo (${factTrasDeficit.Estatus})`);
+  const stockTrasDeficit =
+    (await prisma.productos.findUnique({ where: { Producto_ID: prodId } })).Stock_Actual;
+  assert(stockTrasDeficit === stockPreReversion,
+    `Rollback: stock intacto tras rechazo (= ${stockTrasDeficit})`);
+  // Financiar la gaveta para permitir la reversión real (garantiza y valida el caso).
+  await prisma.caja.update({
+    where: { Caja_ID: cajaActiva.Caja_ID },
+    data: { Saldo_Actual: Math.max(saldoPrevio, 100) }
+  });
+
+  // 8b. Reversión real → NC + restitución de stock/CMP + egreso espejo en caja
+  const revOk = await (await fetch(`${BASE}/facturas/${facturaId}/reversar`, {
+    method: 'POST', headers: auth, body: JSON.stringify({})
+  })).json();
+  assert(!!revOk.notaCredito, `Reversión exitosa: Nota de Crédito ID ${revOk.notaCredito?.Factura_ID}`);
+  const ncDb = await prisma.facturas.findUnique({
+    where: { Factura_ID: revOk.notaCredito.Factura_ID }
+  });
+  assert(ncDb.Estatus === 'Emitida', `NC Estatus Emitida (${ncDb.Estatus})`);
+  assert(ncDb.Tipo_Documento === 'NOTA_CREDITO', `NC Tipo_Documento NOTA_CREDITO (${ncDb.Tipo_Documento})`);
+  assert(ncDb.Factura_Afectada_ID === facturaId, `NC afecta factura ${facturaId} (= ${ncDb.Factura_Afectada_ID})`);
+  assert(ncSerie.test(ncDb.Numero_Control || ''), `NC serie CTRL-NC-<año>: ${ncDb.Numero_Control}`);
+  assert(Number(ncDb.Total_General) < 0, `NC Total en negativo (-${Number(ncDb.Total_General).toFixed(2)})`);
+  const factReversada = await prisma.facturas.findUnique({ where: { Factura_ID: facturaId } });
+  assert(factReversada.Estatus === 'Reversada', `Original REVERSADA (${factReversada.Estatus})`);
+  const pFinal = await prisma.productos.findUnique({ where: { Producto_ID: prodId } });
+  assert(Number(pFinal.Stock_Actual) === 10, `Stock restituido a 10 (= ${Number(pFinal.Stock_Actual)})`);
+  assert(Math.abs(Number(pFinal.Costo_Promedio) - 2.5) < 0.0001,
+    `CMP recalculado a costo histórico 2.5000 (= ${Number(pFinal.Costo_Promedio)})`);
+  const egresosRev = await prisma.movimientos_caja.findMany({
+    where: { Origen_Tipo: 'factura', Origen_ID: facturaId, Tipo: 'EGRESO' }
+  });
+  assert(egresosRev.length > 0, `Egreso(s) en caja por reversión (= ${egresosRev.length})`);
+  assert(Math.abs(Number(egresosRev[0].Monto_USD) - 17.4) < 0.01,
+    `Egreso espejo = 17.40 USD (= ${Number(egresosRev[0].Monto_USD).toFixed(2)})`);
 
   console.log('\n===========================================');
   console.log('PRUEBA DE HUMO E2E COMPLETADA SIN ERRORES');

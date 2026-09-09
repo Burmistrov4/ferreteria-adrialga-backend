@@ -48,7 +48,9 @@ async function asignarNCControl(tx: any): Promise<string> {
     create: { Clave: clave, Valor: 1 },
     update: { Valor: { increment: 1 } },
   });
-  return `00-00-${String(contador.Valor).padStart(8, '0')}`;
+  // Serie propia con prefijo NC-<año>- para no colisionar con el N° de control
+  // único global de las facturas regulares (00-00-XXXXXXXX).
+  return `NC-${anio}-${String(contador.Valor).padStart(8, '0')}`;
 }
 
 // Métodos de pago considerados en divisas extranjeras (base del IGTF 3%).
@@ -341,6 +343,28 @@ export const reversarVenta = async (req: AuthRequest, res: Response) => {
     return res.status(401).json({ message: 'Token sin identificación de usuario' });
   }
 
+  // ── Autorización en caliente: un CAJERO requiere PIN de SUPERVISOR/ADMIN ──
+  const rol = (req.user?.rol ?? '').toString().toUpperCase();
+  const esSupervisor = rol === 'SUPERVISOR' || rol === 'ADMIN';
+  let autorizadoPorId: number | null = null;
+  if (!esSupervisor) {
+    const pin = (req.body?.pinSupervisor ?? '').toString().trim();
+    if (!pin) {
+      return res.status(401).json({
+        error: 'Se requiere autorización de Supervisor (PIN) para reversar ventas',
+        tipo: 'SUPERVISOR_REQUERIDO'
+      });
+    }
+    const supervisor = await prisma.usuarios.findFirst({
+      where: { PIN_Operaciones: pin, Rol: { in: ['SUPERVISOR', 'ADMIN'] }, Activo: true },
+      select: { Usuario_ID: true }
+    });
+    if (!supervisor) {
+      return res.status(401).json({ error: 'PIN de Supervisor inválido', tipo: 'PIN_INVALIDO' });
+    }
+    autorizadoPorId = supervisor.Usuario_ID;
+  }
+
   try {
     const facturaOriginal = await prisma.facturas.findUnique({
       where: { Factura_ID: Number(id) },
@@ -394,7 +418,8 @@ export const reversarVenta = async (req: AuthRequest, res: Response) => {
           Tasa_Cambio: aDecimal(toD4(facturaOriginal.Tasa_Cambio)),
           Estatus: 'Emitida',
           Tipo_Documento: 'NOTA_CREDITO',
-          Factura_Afectada_ID: facturaOriginal.Factura_ID
+          Factura_Afectada_ID: facturaOriginal.Factura_ID,
+          Autorizado_Por_ID: autorizadoPorId
         }
       });
 
