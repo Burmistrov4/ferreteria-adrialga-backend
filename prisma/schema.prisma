@@ -65,15 +65,23 @@ model productos {
 }
 
 model usuarios {
-  Usuario_ID            Int                     @id @default(autoincrement())
-  Nombre                String                  @db.VarChar(180)
-  Credencial            String                  @unique(map: "Credencial") @db.VarChar(50)
-  Password              String                  @db.VarChar(255)
-  Rol                   String                  @default("Cajero") @db.VarChar(30)
-  Activo                Boolean                 @default(true)
-  Fecha_Registro        DateTime                @default(now()) @db.Timestamp(0)
+  Usuario_ID            Int        @id @default(autoincrement())
+  Nombre                String     @db.VarChar(180)
+  Credencial            String     @unique(map: "Credencial") @db.VarChar(50)
+  Password              String     @db.VarChar(255)
+  // Rol de acceso: CAJERO | SUPERVISOR | ADMIN (default Cajero).
+  Rol                   RolUsuario @default(CAJERO)
+  // PIN de operación (4-6 dígitos) para autorización en caliente de acciones
+  // críticas (reversión de ventas, ajustes de inventario). Solo lo poseen
+  // perfiles SUPERVISOR/ADMIN.
+  PIN_Operaciones       String?    @db.VarChar(10)
+  Activo                Boolean    @default(true)
+  Fecha_Registro        DateTime   @default(now()) @db.Timestamp(0)
   facturas              facturas[]
   notas_entrega_entrada notas_entrega_entrada[]
+  autorizaciones        facturas[] @relation("AutorizadoPor")
+
+  @@index([Rol], map: "IDX_Usuarios_Rol")
 }
 
 model facturas {
@@ -92,11 +100,14 @@ model facturas {
   Tipo_Documento      String?            @default("FACTURA") @db.VarChar(20)
   // Para NOTA_CREDITO apunta al Factura_ID original afectado.
   Factura_Afectada_ID Int?
+  // Supervisor/Admin que autorizó con PIN una acción crítica (reversión).
+  Autorizado_Por_ID   Int?
   Cliente_ID          Int
   Usuario_ID          Int
   detalle_facturas    detalle_facturas[]
   clientes            clientes           @relation(fields: [Cliente_ID], references: [Cliente_ID], map: "FK_Facturas_Clientes")
   usuarios            usuarios           @relation(fields: [Usuario_ID], references: [Usuario_ID], map: "FK_Facturas_Usuarios")
+  autorizadoPor       usuarios?          @relation("AutorizadoPor", fields: [Autorizado_Por_ID], references: [Usuario_ID], map: "FK_Facturas_AutorizadoPor")
   pagos               pagos[]
 
   @@index([Cliente_ID], map: "FK_Facturas_Clientes")
@@ -104,6 +115,7 @@ model facturas {
   @@index([Fecha_Emision], map: "IDX_Facturas_Fecha")
   @@index([Tipo_Documento], map: "IDX_Facturas_TipoDoc")
   @@index([Factura_Afectada_ID], map: "IDX_Facturas_Afectada")
+  @@index([Autorizado_Por_ID], map: "IDX_Facturas_Autorizado")
 }
 
 model detalle_facturas {
@@ -243,4 +255,11 @@ model tasas_bcv {
   Tasa           Decimal  @db.Decimal(12, 4)
   Origen         String   @default("Banco Central de Venezuela") @db.VarChar(100)
   Fecha_Registro DateTime @default(now()) @db.Timestamp(0)
+}
+
+// Roles de usuario del sistema (Autorización en Caliente por PIN).
+enum RolUsuario {
+  CAJERO
+  SUPERVISOR
+  ADMIN
 }

@@ -36,3 +36,40 @@ export const login = async (req: Request, res: Response) => {
     return res.status(500).json({ message: 'Error interno en el servidor', error });
   }
 };
+
+/**
+ * POST /auth/validar-pin-supervisor
+ * Valida el PIN de operación de un perfil SUPERVISOR/ADMIN para autorizar en
+ * caliente una acción crítica (reversión de ventas, ajustes de inventario).
+ * Body: { pin: string }. Retorna el usuario autorizante para persistirlo.
+ */
+export const validarPinSupervisor = async (req: Request, res: Response) => {
+  const pin = (req.body?.pin ?? '').toString().trim();
+  if (!pin) {
+    return res.status(400).json({ valido: false, error: 'PIN de Supervisor requerido' });
+  }
+
+  try {
+    const supervisor = await prisma.usuarios.findFirst({
+      where: {
+        PIN_Operaciones: pin,
+        Rol: { in: ['SUPERVISOR', 'ADMIN'] },
+        Activo: true
+      },
+      select: { Usuario_ID: true, Nombre: true, Rol: true }
+    });
+
+    if (!supervisor) {
+      return res.status(401).json({ valido: false, error: 'PIN de Supervisor inválido' });
+    }
+
+    return res.json({
+      valido: true,
+      usuarioId: supervisor.Usuario_ID,
+      nombre: supervisor.Nombre,
+      rol: supervisor.Rol
+    });
+  } catch (error) {
+    return res.status(500).json({ message: 'Error interno en el servidor', error });
+  }
+};

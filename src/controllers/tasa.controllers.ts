@@ -93,10 +93,17 @@ export const obtenerTasaCambio = async (_req: Request, res: Response) => {
     });
   }
 
-  // ── Nivel 4: nada disponible ──────────────────────────────────────────────
-  return res.status(503).json({
-    error: 'TASA_NO_DISPONIBLE',
-    message:
-      'El microservicio BCV no está disponible y no existe ninguna tasa histórica (tasas_bcv ni facturas). Verifique el microservicio Python-Scrappers.',
+  // ── Nivel 4: sin histórico (BD recién creada) ──────────────────────────────
+  // Nunca devolver NaN/null: se responde una tasa numérica válida de respaldo
+  // (1.00) claramente marcada, para que la emisión fiscal siga siendo posible.
+  const respaldo = 1.0;
+  return res.json({
+    tasa: respaldo,
+    moneda: 'USD',
+    origen: 'Respaldo seguro (sin histórico disponible)',
+    fuente: 'fallback-seguro',
+    fecha: fecha.toISOString().slice(0, 10),
+    aviso:
+      'BD sin tasas registradas: usando tasa de respaldo 1.00 hasta que el microservicio BCV responda o exista histórico.',
   });
 };
