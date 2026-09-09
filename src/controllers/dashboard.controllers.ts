@@ -25,11 +25,13 @@ const n = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v)
  * parametrizado (seguro contra inyección SQL).
  */
 export const getSerieFinanciera = async (req: Request, res: Response) => {
-  const periodo = normalizarPeriodo(req.query.periodo);
+  const periodo = normalizarPeriodo(req.query.periodo ?? req.query.rango);
   const { desde, hasta, formatoSQL } = calcularRango(periodo);
+  // Ventana analítica de 30 días para el Asistente (rotación, muerto, margen).
+  const desde30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
   try {
-    const [serieVentas, agregadoVentas, ventasBsRaw, cajaDiaria, margenRaw, inventarioRaw, productosBajoStock] =
+    const [serieVentas, agregadoVentas, ventasBsRaw, cajaDiaria, margenRaw, inventarioRaw, productosBajoStock, inventarioMuertoRaw, alertasMargenRaw, rotacionRaw] =
       await Promise.all([
         // a) Serie de ventas agregada por hora/día/mes (USD y Bs con la tasa histórica)
         prisma.$queryRaw<
@@ -83,7 +85,63 @@ export const getSerieFinanciera = async (req: Request, res: Response) => {
             Stock_Actual: true,
             Stock_Minimo: true
           }
-        })
+        }),
+
+        // f) Inventario muerto: sin ventas en los últimos 30 días (con stock > 0)
+        prisma.$queryRaw<
+          {
+            productoId: number;
+            sku: string;
+            nombre: string;
+            stock: number | bigint;
+            costo: string | number | null;
+          }[]
+        >`SELECT p.Producto_ID AS productoId,
+                 p.SKU_Codigo AS sku, p.Nombre AS nombre,
+                 p.Stock_Actual AS stock, p.Costo_Promedio AS costo
+          FROM productos p
+          WHERE p.Activo = 1 AND p.Stock_Actual > 0
+            AND NOT EXISTS (
+              SELECT 1 FROM detalle_facturas d
+              INNER JOIN facturas f ON f.Factura_ID = d.Factura_ID
+              WHERE d.Producto_ID = p.Producto_ID AND f.Fecha_Emision >= ${desde30}
+            )
+          ORDER BY p.Stock_Actual DESC`,
+
+        // g) Alertas de margen bajo (< 20%) y productos a pérdida (margen < 0)
+        prisma.$queryRaw<
+          {
+            productoId: number;
+            sku: string;
+            nombre: string;
+            precio: string | number | null;
+            costo: string | number | null;
+            margenPct: number | string | null;
+          }[]
+        >`SELECT p.Producto_ID AS productoId, p.SKU_Codigo AS sku, p.Nombre AS nombre,
+                 p.Precio_Venta AS precio, p.Costo_Promedio AS costo,
+                 ROUND((p.Precio_Venta - p.Costo_Promedio) / p.Precio_Venta * 100, 2) AS margenPct
+          FROM productos p
+          WHERE p.Activo = 1 AND p.Precio_Venta > 0 AND p.Costo_Promedio > 0
+          HAVING margenPct < 20
+          ORDER BY margenPct ASC`,
+
+        // h) Rotación (últimos 30 días): unidades vendidas por producto
+        prisma.$queryRaw<
+          {
+            productoId: number;
+            nombre: string;
+            stock: number | bigint;
+            unidades: string | number | bigint | null;
+          }[]
+        >`SELECT p.Producto_ID AS productoId, p.Nombre AS nombre,
+                 p.Stock_Actual AS stock, SUM(d.Cantidad) AS unidades
+          FROM detalle_facturas d
+          INNER JOIN facturas f ON f.Factura_ID = d.Factura_ID
+          INNER JOIN productos p ON p.Producto_ID = d.Producto_ID
+          WHERE f.Fecha_Emision >= ${desde30}
+          GROUP BY p.Producto_ID, p.Nombre, p.Stock_Actual
+          ORDER BY unidades DESC`
       ]);
 
     // Top 5 productos más vendidos del periodo, por unidades vendidas.
@@ -116,6 +174,50 @@ export const getSerieFinanciera = async (req: Request, res: Response) => {
     const cantidadFacturas = n((agregadoVentas as any)?._count?._all);
     const ticketPromedio = cantidadFacturas > 0 ? montoTotal / cantidadFacturas : 0;
     const ticketPromedioBs = cantidadFacturas > 0 ? montoTotalBs / cantidadFacturas : 0;
+
+    // ── Asistente de Negocio ─────────────────────────────────────────────────
+    // Inventario muerto (con stock > 0 pero sin ventas en 30 días), valorizado.
+    const inventarioMuerto = (inventarioMuertoRaw as any[]).map((p) => ({
+      productoId: Number(p.productoId),
+      sku: p.sku,
+      nombre: p.nombre,
+      stock: n(p.stock),
+      costoDolar: n(p.costo),
+      valorDolares: Number((n(p.stock) * n(p.costo)).toFixed(2))
+    }));
+
+    // Alertas de margen: <0 → pérdida; 0-20 → margen bajo.
+    const alertasMargen = (alertasMargenRaw as any[]).map((p) => {
+      const margenPct = Number(p.margenPct);
+      return {
+        productoId: Number(p.productoId),
+        sku: p.sku,
+        nombre: p.nombre,
+        precioDolar: n(p.precio),
+        costoDolar: n(p.costo),
+        margenPct,
+        posicion: margenPct < 0 ? 'perdida' : 'bajo'
+      };
+    });
+
+    // Índice de rotación = unidades vendidas (30d) / stock actual.
+    const rotacion = (rotacionRaw as any[]).map((r) => {
+      const stock = n(r.stock);
+      const unidades = n(r.unidades);
+      return {
+        productoId: Number(r.productoId),
+        nombre: r.nombre,
+        unidades,
+        stock,
+        indice: stock > 0 ? Number((unidades / stock).toFixed(2)) : unidades
+      };
+    });
+    const mayorRotacion = [...rotacion]
+      .sort((a, b) => b.indice - a.indice)
+      .slice(0, 3);
+    const menorRotacion = [...rotacion]
+      .sort((a, b) => a.indice - b.indice)
+      .slice(0, 3);
 
     res.json({
       periodo,
@@ -153,7 +255,13 @@ export const getSerieFinanciera = async (req: Request, res: Response) => {
         nombre: t.nombre,
         unidades: n(t.unidades),
         monto: n(t.monto)
-      }))
+      })),
+      // Nodo del Asistente de Negocio (analítica de 30 días).
+      asistente: {
+        inventarioMuerto,
+        alertasMargen,
+        rotacion: { mayorRotacion, menorRotacion }
+      }
     });
   } catch (error) {
     console.error('Error al generar la serie financiera del dashboard:', error);
