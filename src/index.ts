@@ -15,6 +15,7 @@ import scrapingRoutes from './routes/scraping.routes';
 import tesoreriaRoutes from './routes/tesoreria.routes';
 import cajaRoutes from './routes/caja.routes';
 import seniatRoutes from './routes/seniat.routes';
+import pagosRoutes from './routes/pagos.routes';
 import { obtenerTasaCambio } from './controllers/tasa.controllers';
 import { getHealth } from './controllers/health.controllers';
 
@@ -115,6 +116,8 @@ app.use('/api/tesoreria', tesoreriaRoutes);
 app.use('/api/caja', cajaRoutes);
 // Rutas de reportes fiscales SENIAT (libro de ventas, compras, resumen IVA)
 app.use('/api/seniat', seniatRoutes);
+// Rutas del motor de pagos mixtos con precisión decimal (decimal.js)
+app.use('/api/pagos', pagosRoutes);
 
 // Healthcheck de producción (sin auth, consulta liviana SELECT 1 a MySQL)
 app.get('/api/health', getHealth);
