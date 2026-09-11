@@ -21,6 +21,7 @@ export interface FilaLibroVentas {
   alicuota: number; // 16 IVA | 0 si exenta
   ivaDebitoUsd: number; // NEGATIVO en Notas de Crédito
   igtfUsd: number; // 3% sobre pagos en divisas (Impuesto a las Grandes Transacciones)
+  baseIgtfUsd: number; // porción del total cubierta en divisas (base del 3%)
   totalUsd: number; // NEGATIVO en Notas de Crédito
   tasaBcv: number;
   totalBs: number;
@@ -106,6 +107,10 @@ export const SeniatService = {
       // Base gravada derivada del IVA (16%); NEGATIVA en NC. Si no hay IVA (exento)
       // la base gravada es 0 y el rubro exento conserva su signo.
       const baseGravada = iva !== 0 ? (iva * 100) / 16 : 0;
+      // Base IGTF derivada del propio impuesto (misma técnica fiscal que la
+      // base del IVA): base = impuesto × 100 / alícuota. Es EXACTA sin importar
+      // la fórmula de origen del POS y preserva el signo (negativa en NC).
+      const baseIgtf = igtf !== 0 ? (igtf * 100) / 3 : 0;
       return {
         operacion: i + 1,
         fecha: fechaISO(f.Fecha_Emision),
@@ -118,6 +123,7 @@ export const SeniatService = {
         alicuota: iva !== 0 ? 16 : 0,
         ivaDebitoUsd: iva,
         igtfUsd: igtf,
+        baseIgtfUsd: baseIgtf,
         totalUsd: total,
         tasaBcv: tasa,
         totalBs: Number((total * tasa).toFixed(2)),

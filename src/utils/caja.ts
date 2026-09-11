@@ -17,6 +17,32 @@ export class CajaCerradaError extends Error {
 }
 
 /**
+ * Error semántico: existe un turno de un día ANTERIOR que nunca fue cerrado
+ * ni conciliado (sin Fecha_Cierre). El arqueo Z de esa jornada es obligatorio
+ * antes de facturar de nuevo (mandato FRENTE 2: control de cierres).
+ */
+export class ArqueoPendienteError extends Error {
+  public status = 409;
+  constructor(turnoId: number, fechaApertura: Date) {
+    super(
+      `Arqueo pendiente: el turno #${turnoId} abierto el ` +
+      `${fechaApertura.toISOString().slice(0, 10)} no tiene cierre registrado. ` +
+      `Realice el arqueo Z de esa jornada antes de emitir nuevas facturas.`
+    );
+    this.name = 'ArqueoPendienteError';
+  }
+}
+
+/**
+ * Fecha (jornada) actual truncada a medianoche UTC.
+ */
+function inicioJornadaActual(): Date {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
+
+/**
  * Asegura que exista una Caja Principal activa. Si ninguna caja está activa,
  * se crea con saldo 0. Reutilizable dentro de una transacción (tx) o con el
  * cliente global (prisma).
@@ -54,11 +80,30 @@ export async function obtenerCajaAbierta(
 
 /**
  * Valida que exista una caja abierta. Lanza [CajaCerradaError] si no la hay.
+ * Además exige que ningún turno de una jornada ANTERIOR haya quedado abierto
+ * (sin Fecha_Cierre): esa caja "colgada" exige arqueo Z antes de vender
+ * (mandato FRENTE 2: bloquear facturación con arqueos pendientes).
  * Debe llamarse dentro de una transacción para evitar carreras.
  */
 export async function exigirCajaAbierta(
   tx: Prisma.TransactionClient | PrismaClient
 ) {
+  // ── Gate 1: arqueos pendientes de días anteriores ────────────────────────
+  // Cualquier caja ABIERTA cuya apertura sea anterior a la jornada actual
+  // carece de Fecha_Cierre conciliado → bloque total de nuevas ventas.
+  const inicioHoy = inicioJornadaActual();
+  const turnoHuerfano = await tx.caja.findFirst({
+    where: {
+      Activa: true,
+      Fecha_Apertura: { lt: inicioHoy }
+    },
+    orderBy: { Fecha_Apertura: 'asc' }
+  });
+  if (turnoHuerfano) {
+    throw new ArqueoPendienteError(turnoHuerfano.Caja_ID, turnoHuerfano.Fecha_Apertura);
+  }
+
+  // ── Gate 2: caja activa de la jornada actual ─────────────────────────────
   const caja = await obtenerCajaAbierta(tx);
   if (!caja) throw new CajaCerradaError();
   return caja;

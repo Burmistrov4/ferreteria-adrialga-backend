@@ -74,7 +74,7 @@ model usuarios {
   // PIN de operación (4-6 dígitos) para autorización en caliente de acciones
   // críticas (reversión de ventas, ajustes de inventario). Solo lo poseen
   // perfiles SUPERVISOR/ADMIN.
-  PIN_Operaciones       String?    @db.VarChar(10)
+  PIN_Operaciones       String?    @db.VarChar(60)
   Activo                Boolean    @default(true)
   Fecha_Registro        DateTime   @default(now()) @db.Timestamp(0)
   facturas              facturas[]
