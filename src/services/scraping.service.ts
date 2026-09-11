@@ -68,9 +68,12 @@ function describirError(error: unknown, contexto: string): Error {
 export class ScrapingService {
   /**
    * Obtiene la tasa de cambio del BCV desde el microservicio.
+   * Mandato FRENTE 2: timeout estricto de 5 segundos — si el scraper está
+   * caído o lento, el backend NO se bloquea; el llamador cae al modo
+   * offline (cascada de respaldo en tasa.controllers.ts) que envía la
+   * bandera `fuente`/`aviso` al frontend para habilitar el registro manual
+   * sin detener el flujo de venta.
    * Nota: en producción esta ruta NO requiere API Key (solo /proveedores/*).
-   * Ante fallo del servicio lanza un error controlado — el llamador decide
-   * si usa un fallback (ej. última tasa persistida en BD).
    */
   static async obtenerTasaBCV(): Promise<{
     moneda: string;
@@ -78,7 +81,9 @@ export class ScrapingService {
     origen?: string;
   }> {
     try {
-      const { data } = await client.get('/api/v1/bcv/tasa');
+      const { data } = await client.get('/api/v1/bcv/tasa', {
+        timeout: 5000
+      });
       return {
         moneda: data.moneda ?? 'USD',
         tasa: Number(data.tasa),

@@ -46,11 +46,13 @@ function periodo(req: Request): { anio: number; mes: number } {
 const ENC_VENTAS_BS = [
   // Encabezado SENIAT en Bolívares (tasa BCV histórica) y delimitador ';'.
   // Separación estructural de rubros exentos (Base_Exenta) y gravados
-  // (Base_Imponible), exigida por la Providencia. 15 columnas.
+  // (Base_Imponible), exigida por la Providencia. 16 columnas con el
+  // desglose completo del IGTF: Base (divisas a tasa) + Alícuota + Monto.
   'N_Operacion', 'Fecha', 'RIF', 'Razon_Social', 'Nro_Factura',
   'Nro_Control', 'Tipo_Documento', 'Nro_Factura_Afectada',
   'Base_Exenta_Bs', 'Base_Imponible_Bs', 'Alicuota_%', 'IVA_Bs',
-  'IGTF_Bs', 'Retencion_IVA_Bs', 'Total_Venta_Bs',
+  'Base_IGTF_Bs', 'Alicuota_IGTF_%', 'IGTF_Bs', 'Retencion_IVA_Bs',
+  'Total_Venta_Bs',
 ];
 
 const ENC_COMPRAS = [
@@ -81,6 +83,8 @@ export const getLibroVentas = async (req: Request, res: Response) => {
           red2(v.baseImponibleUsd * t), // Base_Imponible_Bs
           v.alicuota, // Alicuota_%
           red2(v.ivaDebitoUsd * t), // IVA_Bs
+          red2((v.baseIgtfUsd ?? 0) * t), // Base_IGTF_Bs (divisas a tasa BCV)
+          (v.igtfUsd ?? 0) !== 0 ? '3' : '0', // Alicuota_IGTF_%
           red2(v.igtfUsd * t), // IGTF_Bs
           '0.00', // Retencion_IVA_Bs (módulo de retenciones aún no modelado)
           red2(v.totalUsd * t), // Total_Venta_Bs

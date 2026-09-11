@@ -21,21 +21,23 @@ async function main() {
   });
 
   // SUPERVISOR por defecto con PIN de operación (autorización de reversiones).
+  // El PIN se persiste SOLO como hash bcrypt: nunca en texto plano.
   const hashedSupervisorPassword = await hashPassword('supervisor');
+  const hashedPinOperaciones = await hashPassword('1234');
   const supervisor = await prisma.usuarios.upsert({
     where: { Credencial: 'supervisor' },
     update: {
       Password: hashedSupervisorPassword,
       Activo: true,
       Rol: 'SUPERVISOR',
-      PIN_Operaciones: '1234'
+      PIN_Operaciones: hashedPinOperaciones
     },
     create: {
       Credencial: 'supervisor',
       Nombre: 'Supervisor de Caja',
       Password: hashedSupervisorPassword,
       Rol: 'SUPERVISOR',
-      PIN_Operaciones: '1234',
+      PIN_Operaciones: hashedPinOperaciones,
       Activo: true
     }
   });

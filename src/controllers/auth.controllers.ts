@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../config/db';
 import { comparePassword } from '../utils/password.util';
+import { validarPinSupervisorHash } from '../utils/pin_supervisor';
 
 export const login = async (req: Request, res: Response) => {
   const { Credencial, Password } = req.body;
@@ -50,14 +51,9 @@ export const validarPinSupervisor = async (req: Request, res: Response) => {
   }
 
   try {
-    const supervisor = await prisma.usuarios.findFirst({
-      where: {
-        PIN_Operaciones: pin,
-        Rol: { in: ['SUPERVISOR', 'ADMIN'] },
-        Activo: true
-      },
-      select: { Usuario_ID: true, Nombre: true, Rol: true }
-    });
+    // El PIN se verifica con bcrypt contra los hashes de los supervisores
+    // activos: nunca se compara en texto plano (FRENTE 2, auditoría de PIN).
+    const supervisor = await validarPinSupervisorHash(prisma, pin);
 
     if (!supervisor) {
       return res.status(401).json({ valido: false, error: 'PIN de Supervisor inválido' });

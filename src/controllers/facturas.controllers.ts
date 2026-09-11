@@ -3,7 +3,8 @@ import { prisma } from '../config/db';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import { normalizarPeriodo, calcularRango, rangoPersonalizado } from '../utils/fechas';
 import { toD4, addD4, mulD4, divD4, aDecimal, IVA_ALIQUOTA, IGTF_ALIQUOTA, CIEN } from '../utils/dinero';
-import { exigirCajaAbierta, CajaCerradaError } from '../utils/caja';
+import { exigirCajaAbierta, CajaCerradaError, ArqueoPendienteError } from '../utils/caja';
+import { validarPinSupervisorHash } from '../utils/pin_supervisor';
 
 /**
  * Error semántico: la gaveta no cubre la devolución (regla CERO DÉFICIT).
@@ -318,6 +319,14 @@ export const createFactura = async (req: AuthRequest, res: Response) => {
 
     return res.status(201).json({ message: 'Factura registrada exitosamente', factura: resultado });
   } catch (error: any) {
+    // Serialización por instancia (no por status): un 409 puede significar
+    // caja cerrada O arqueo pendiente de una jornada anterior.
+    if (error instanceof ArqueoPendienteError) {
+      return res.status(error.status).json({ error: error.message, tipo: 'ARQUEO_PENDIENTE' });
+    }
+    if (error instanceof CajaCerradaError) {
+      return res.status(error.status).json({ error: error.message, tipo: 'CAJA_CERRADA' });
+    }
     const status = typeof error?.status === 'number' ? error.status : 400;
     return res.status(status).json({
       error: error.message || 'Error al procesar la venta',
@@ -355,10 +364,9 @@ export const reversarVenta = async (req: AuthRequest, res: Response) => {
         tipo: 'SUPERVISOR_REQUERIDO'
       });
     }
-    const supervisor = await prisma.usuarios.findFirst({
-      where: { PIN_Operaciones: pin, Rol: { in: ['SUPERVISOR', 'ADMIN'] }, Activo: true },
-      select: { Usuario_ID: true }
-    });
+    // Verificación bcrypt del PIN (nunca texto plano) contra los hashes de
+    // los supervisores activos registrados.
+    const supervisor = await validarPinSupervisorHash(prisma, pin);
     if (!supervisor) {
       return res.status(401).json({ error: 'PIN de Supervisor inválido', tipo: 'PIN_INVALIDO' });
     }
@@ -482,6 +490,9 @@ export const reversarVenta = async (req: AuthRequest, res: Response) => {
 
     return res.status(201).json({ message: 'Venta reversada correctamente', notaCredito: resultado });
   } catch (error: any) {
+    if (error instanceof ArqueoPendienteError) {
+      return res.status(error.status).json({ error: error.message, tipo: 'ARQUEO_PENDIENTE' });
+    }
     if (error instanceof CajaCerradaError) {
       return res.status(error.status).json({ error: error.message, tipo: 'CAJA_CERRADA' });
     }
