@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { exigirCajaAbierta, asegurarCajaPrincipal } from '../utils/caja';
+import { toD4, mulD4, divD4, aDecimal } from '../utils/dinero';
 
 const prisma = new PrismaClient();
 
@@ -77,7 +78,26 @@ export const TesoreriaService = {
       const cxp = await tx.cuentas_por_pagar.findUnique({ where: { CxP_ID: cxpId } });
       if (!cxp) throw new Error('Cuenta por pagar no encontrada');
 
+      const montoD4 = toD4(monto);
+      if (montoD4 <= 0n) {
+        throw new Error('Monto de abono inválido (debe ser mayor a $0.00)');
+      }
+
       const caja = await exigirCajaAbierta(tx);
+
+      // ── REGLA ANTI-DÉFICIT (Fondo de maniobra) ──────────────────────────
+      // Nunca se permite que un abono deje la gaveta en negativo: el montante
+      // debe estar cubierto por el saldo disponible en caja. El supervisor
+      // debe inyectar fondo (Ingreso de Caja) antes de abonar.
+      const saldoCajaD4 = toD4(caja.Saldo_Actual);
+      if (montoD4 > saldoCajaD4) {
+        throw new Error(
+          `SALDO_INSUFICIENTE:El abono de $${aDecimal(montoD4)} excede el saldo ` +
+          `disponible en caja ($${aDecimal(saldoCajaD4)}). Inyecte un Ingreso ` +
+          `de Caja (supervisor) antes de abonar, o reduzca el monto.`
+        );
+      }
+
       const nuevoMontoPagado = Number(cxp.Monto_Pagado) + monto;
       const nuevoSaldo = Number(cxp.Monto_Total) - nuevoMontoPagado;
       const nuevoEstatus = nuevoSaldo <= 0 ? 'Pagada' : 'Pendiente';
@@ -97,7 +117,7 @@ export const TesoreriaService = {
           Tipo: 'EGRESO',
           Concepto: `Abono a CxP #${cxpId}`,
           Metodo_Pago: metodoPago,
-          Monto_USD: monto,
+          Monto_USD: aDecimal(montoD4),
           Origen_Tipo: 'cxp',
           Origen_ID: cxpId,
         },
@@ -105,7 +125,7 @@ export const TesoreriaService = {
 
       await tx.caja.update({
         where: { Caja_ID: caja.Caja_ID },
-        data: { Saldo_Actual: { decrement: monto } },
+        data: { Saldo_Actual: { decrement: aDecimal(montoD4) } },
       });
 
       return cxpActualizada;

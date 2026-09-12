@@ -18,8 +18,10 @@ export async function siguienteSkuPorCategoria(
   const year = new Date().getFullYear();
   const patron = `${categoria.Prefijo_SKU}-${year}-%`;
 
+  // La tabla real es `productos` (minúsculas); usar el casing exacto para
+  // MySQL/MariaDB en Linux (Railway), donde los nombres son sensibles a caso.
   const [row] = await tx.$queryRaw<{ maxSku: string | null }[]>`
-    SELECT MAX(SKU_Codigo) AS maxSku FROM Productos
+    SELECT MAX(SKU_Codigo) AS maxSku FROM productos
     WHERE SKU_Codigo LIKE ${patron}`;
 
   const secuencia = row?.maxSku ? parseInt(row.maxSku.split('-')[2], 10) + 1 : 1;
