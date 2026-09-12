@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getEstadoCaja, abrirCaja, cerrarCaja, getHistoricoArqueos } from '../controllers/caja.controllers';
+import { getEstadoCaja, abrirCaja, cerrarCaja, getHistoricoArqueos, ingresarFondoCaja } from '../controllers/caja.controllers';
 import { authenticateToken } from '../middlewares/auth.middleware';
 
 const router = Router();
@@ -11,5 +11,6 @@ router.get('/estado', getEstadoCaja);
 router.get('/historico', getHistoricoArqueos);
 router.post('/abrir', abrirCaja);
 router.post('/cerrar', cerrarCaja);
+router.post('/ingreso', ingresarFondoCaja);
 
 export default router;

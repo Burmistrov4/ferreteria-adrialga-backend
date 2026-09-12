@@ -53,6 +53,14 @@ export const abonarCuentaPorPagar = async (req: Request, res: Response) => {
     );
     res.json(data);
   } catch (error: any) {
+    // Fondo de maniobra insuficiente → 422 exponiendo el tipo para que la
+    // UI ofrezca "Ingreso de Caja" o reduzca el abono.
+    if (typeof error?.message === 'string' && error.message.startsWith('SALDO_INSUFICIENTE:')) {
+      return res.status(422).json({
+        error: error.message.replace('SALDO_INSUFICIENTE:', ''),
+        tipo: 'SALDO_INSUFICIENTE'
+      });
+    }
     res.status(400).json({ error: error.message });
   }
 };

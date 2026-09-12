@@ -3,6 +3,7 @@ import { prisma } from '../config/db';
 import { toD4, aDecimal } from '../utils/dinero';
 import { obtenerCajaAbierta } from '../utils/caja';
 import { evaluarArqueo } from '../utils/arqueo';
+import { validarPinSupervisorHash } from '../utils/pin_supervisor';
 
 // Prisma devuelve DECIMAL como objetos Decimal; se normalizan a Number.
 const decToNumber = (v: any): number | null =>
@@ -213,6 +214,69 @@ export const cerrarCaja = async (req: Request, res: Response) => {
       message: 'Caja cerrada correctamente (arqueo registrado)',
       caja: sanitizarCaja({ ...cerrada, Saldo_Actual: 0 }),
       saldoEntregado: Number(saldoActual.toFixed(4))
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * POST /api/caja/ingreso
+ * body: { monto, metodoPago?, observacion?, pinSupervisor? }
+ *
+ * Fondo de maniobra: inyecta dinero a la caja del turno activo (para dar
+ * vuelto o cubrir compras de contado). Exige que el usuario autenticado sea
+ * SUPERVISOR/ADMIN o que envíe el PIN de supervisor (autorización en caliente,
+ * bcrypt). Registra INGRESO y suma al Saldo_Actual dentro de la transacción.
+ */
+export const ingresarFondoCaja = async (req: Request, res: Response) => {
+  try {
+    const { monto, metodoPago, observacion } = req.body;
+    const pin = (req.body?.pinSupervisor ?? '').toString().trim();
+
+    const montoD4 = toD4(monto);
+    if (montoD4 <= 0n) {
+      return res.status(400).json({ error: 'El monto del ingreso debe ser mayor a $0.00' });
+    }
+
+    // ── Autorización: el rol del token o el PIN de supervisor ─────────────
+    const rol = ((req as any).user?.rol ?? '').toString().toUpperCase();
+    const esSupervisor = rol === 'SUPERVISOR' || rol === 'ADMIN';
+    if (!esSupervisor) {
+      const autorizado = await validarPinSupervisorHash(prisma, pin);
+      if (!autorizado) {
+        return res.status(401).json({ error: 'PIN de Supervisor inválido', tipo: 'PIN_INVALIDO' });
+      }
+    }
+
+    const caja = await obtenerCajaAbierta(prisma as any);
+    if (!caja) {
+      return res.status(409).json({ error: 'No hay una caja abierta', tipo: 'CAJA_CERRADA' });
+    }
+
+    const resultado = await prisma.$transaction(async (tx) => {
+      await tx.movimientos_caja.create({
+        data: {
+          Caja_ID: caja.Caja_ID,
+          Tipo: 'INGRESO',
+          Concepto: observacion
+            ? `Ingreso de caja (fondo de maniobra): ${observacion}`
+            : 'Ingreso de caja (fondo de maniobra)',
+          Metodo_Pago: metodoPago ?? 'Efectivo',
+          Monto_USD: aDecimal(montoD4),
+          Origen_Tipo: 'manual',
+          Fecha: new Date()
+        }
+      });
+      return tx.caja.update({
+        where: { Caja_ID: caja.Caja_ID },
+        data: { Saldo_Actual: { increment: aDecimal(montoD4) } }
+      });
+    });
+
+    return res.status(201).json({
+      message: 'Ingreso de caja registrado correctamente',
+      caja: sanitizarCaja(resultado)
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });

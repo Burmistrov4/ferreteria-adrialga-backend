@@ -172,6 +172,22 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
       if (Forma_Pago === 'Contado') {
         // Regla de negocio (arqueo): compras en contado exigen caja abierta.
         const caja = await exigirCajaAbierta(tx);
+
+        // ── REGLA ANTI-DÉFICIT (Fondo de maniobra) ────────────────────────
+        // Bloquea la compra a contado si el costo total supera el saldo
+        // disponible en caja: nunca se permite dejar la gaveta en negativo.
+        // El cajero debe solicitar un Ingreso de Caja al supervisor (PIN)
+        // o registrar la operación a Crédito.
+        const saldoCajaD4 = toD4(caja.Saldo_Actual);
+        if (totalCosto > saldoCajaD4) {
+          throw new Error(
+            `SALDO_INSUFICIENTE:El costo de la compra ($` +
+            `${aDecimal(totalCosto)}) excede el saldo disponible en caja ` +
+            `($${aDecimal(saldoCajaD4)}). Registre la operación a Crédito o ` +
+            `solicite un Ingreso de Caja al supervisor.`
+          );
+        }
+
         await tx.movimientos_caja.create({
           data: {
             Caja_ID: caja.Caja_ID,
@@ -208,6 +224,14 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
     // Errores de validación de negocio lanzados dentro de la transacción
     if (typeof error?.message === 'string' && error.message.startsWith('VALIDACION:')) {
       return res.status(400).json({ message: error.message.replace('VALIDACION:', '') });
+    }
+    // Fondo de maniobra insuficiente → 400 con tipo para que el cajero
+    // defina entre Crédito o Ingreso de Caja por supervisor.
+    if (typeof error?.message === 'string' && error.message.startsWith('SALDO_INSUFICIENTE:')) {
+      return res.status(422).json({
+        error: error.message.replace('SALDO_INSUFICIENTE:', ''),
+        tipo: 'SALDO_INSUFICIENTE'
+      });
     }
     // Caja cerrada → 409 para que el cliente bloquee la entrada de mercancía
     const status = typeof error?.status === 'number' ? error.status : 400;
