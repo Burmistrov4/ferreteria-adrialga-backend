@@ -172,13 +172,14 @@ export const cerrarCaja = async (req: Request, res: Response) => {
 
     // ── Regla de negocio: el conteo debe cuadrar dentro de ±1 USD ────────────
     // Lógica pura extraída a src/utils/arqueo.ts (testeable sin BD).
-    const { cuadra, diferencia } = evaluarArqueo(saldoActual, montoContado);
+    const { cuadra, diferencia, estado } = evaluarArqueo(saldoActual, montoContado);
     if (!cuadra) {
       return res.status(422).json({
         error: `El arqueo no cuadra: el conteo ($${(saldoActual - diferencia).toFixed(2)}) difiere del saldo en caja ($${saldoActual.toFixed(2)}) en más de $1.00. Revise antes de cerrar.`,
         saldoActual,
         montoContado,
         diferencia,
+        estado,
       });
     }
 
@@ -336,6 +337,11 @@ export const getHistoricoArqueos = async (req: Request, res: Response) => {
         saldoEntregado: Number(saldoEntregado.toFixed(4)),
         // >0 → faltante (entregó menos); <0 → sobrante (entregó de más)
         diferencia: Number((saldoEsperado - saldoEntregado).toFixed(4)),
+        // Estado explícito para la UI (solo aplica a turnos cerrados):
+        // MATCH / SURPLUS / DEFICIT con tolerancia de $0.01 para el reporte.
+        estadoArqueo: t.Estado === 'CERRADA'
+          ? evaluarArqueo(saldoEsperado, saldoEntregado, 0.01).estado
+          : null,
         movimientos: t.movimientos.length,
       };
     });

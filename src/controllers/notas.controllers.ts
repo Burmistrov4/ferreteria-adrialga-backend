@@ -161,7 +161,10 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
           where: { Producto_ID: d.productoId },
           data: {
             Stock_Actual: nuevoStock,
-            Costo_Promedio: aDecimal(cppNuevo)
+            Costo_Promedio: aDecimal(cppNuevo),
+            // Costo_Ultimo refleja la última compra con costo explícito —
+            // base del precio sugerido (Precio = Costo*(1+Margen%)) en la UI.
+            ...(d.recalculaCpp ? { Costo_Ultimo: aDecimal(d.costoD4) } : {}),
           }
         });
       }

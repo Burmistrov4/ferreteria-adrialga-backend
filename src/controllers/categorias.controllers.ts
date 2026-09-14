@@ -64,27 +64,41 @@ export const createCategoria = async (req: Request, res: Response) => {
   try {
     const { Nombre, Prefijo_SKU, Descripcion } = req.body;
 
-    if (!Nombre) {
+    if (!Nombre || !String(Nombre).trim()) {
       return res.status(400).json({ message: 'El nombre de la categoría es obligatorio' });
     }
-    if (!Prefijo_SKU || !REGEX_PREFIJO.test(Prefijo_SKU)) {
+
+    // Prefijo SKU: opcional para el cajero. Si no se envía, se deriva de las
+    // 3 primeras letras del nombre (o GEN si no alcanza). Si se envía,
+    // se valida el formato fiscal esperado.
+    let prefijo = (Prefijo_SKU ?? '').toString().trim().toUpperCase();
+    if (prefijo === '') {
+      const base = String(Nombre).trim().toUpperCase().replace(/[^A-Z]/g, '');
+      prefijo = base.length >= 3 ? base.substring(0, 3) : 'GEN';
+    } else if (!REGEX_PREFIJO.test(prefijo)) {
       return res.status(400).json({
-        message: 'Prefijo_SKU es obligatorio y debe ser de 3 letras mayúsculas (ej. PIN, HER, ELE)'
+        message: 'Prefijo_SKU debe ser de 3 letras mayúsculas (ej. PIN, HER, ELE)'
       });
     }
 
     const nuevaCategoria = await prisma.categorias.create({
       data: {
-        Nombre,
-        Prefijo_SKU,
+        Nombre: String(Nombre).trim(),
+        Prefijo_SKU: prefijo,
         Descripcion
       }
     });
 
     res.status(201).json(nuevaCategoria);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error detallado de Prisma:', error);
-    res.status(500).json({ message: 'Error al registrar la categoría', error });
+    // P2002: violación de restricción única → conflicto legible para la UI.
+    if (error?.code === 'P2002') {
+      return res.status(409).json({
+        message: 'Ya existe una categoría con ese nombre o prefijo SKU.'
+      });
+    }
+    res.status(500).json({ message: 'Error al registrar la categoría' });
   }
 };
 
