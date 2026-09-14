@@ -4,11 +4,18 @@
 // dentro de una tolerancia (±1 USD por redondeos o monedas menores); una
 // diferencia mayor se rechaza para forzar la conciliación.
 
+export type EstadoArqueo = 'MATCH' | 'SURPLUS' | 'DEFICIT';
+
 export interface ResultadoArqueo {
   /** true si el conteo cuadra dentro de la tolerancia. */
   cuadra: boolean;
   /** esperado − contado. >0 → faltante; <0 → sobrante; ≈0 → OK. */
   diferencia: number;
+  /**
+   * Estado explícito del arqueo para el frontend:
+   * MATCH (cuadra), DEFICIT (falta dinero), SURPLUS (sobra dinero).
+   */
+  estado: EstadoArqueo;
 }
 
 /**
@@ -22,8 +29,14 @@ export function evaluarArqueo(
   tolerancia = 1.0
 ): ResultadoArqueo {
   if (montoContado === null || !Number.isFinite(montoContado)) {
-    return { cuadra: true, diferencia: 0 };
+    return { cuadra: true, diferencia: 0, estado: 'MATCH' };
   }
   const diferencia = Number((saldoEsperado - montoContado).toFixed(4));
-  return { cuadra: Math.abs(diferencia) <= tolerancia, diferencia };
+  const cuadra = Math.abs(diferencia) <= tolerancia;
+  const estado: EstadoArqueo = cuadra
+    ? 'MATCH'
+    : diferencia > 0 // esperado > contado → falta dinero
+      ? 'DEFICIT'
+      : 'SURPLUS';
+  return { cuadra, diferencia, estado };
 }

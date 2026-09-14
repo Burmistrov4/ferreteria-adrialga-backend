@@ -9,6 +9,7 @@
     "postinstall": "prisma generate",
     "start": "node dist/index.js",
     "seed": "ts-node-dev --transpile-only src/seed.ts",
+    "migrate:variantes": "ts-node-dev --transpile-only scripts/migrate_variantes.ts",
     "db:deploy": "prisma migrate deploy"
   },
   "engines": {

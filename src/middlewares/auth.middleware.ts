@@ -15,7 +15,18 @@ export const authenticateToken = (req: AuthRequest, res: Response, next: NextFun
 
   jwt.verify(token, process.env.JWT_SECRET || 'secret', (err, user: any) => {
     if (err) {
-      return res.status(403).json({ message: 'Token inválido o expirado' });
+      // 401 + código explícito: el frontend intercepta TOKEN_EXPIRADO para
+      // guardar el carrito y redirigir al login con mensaje (no 403 ambiguo).
+      if (err.name === 'TokenExpiredError') {
+        return res.status(401).json({
+          code: 'TOKEN_EXPIRADO',
+          message: 'Tu sesión ha expirado. Inicia sesión nuevamente.',
+        });
+      }
+      return res.status(401).json({
+        code: 'TOKEN_INVALIDO',
+        message: 'Token inválido',
+      });
     }
     // Normalización del payload: el JWT se emite con el claim `Usuario_ID`
     // (ver auth.controllers.ts). Aceptamos alias por compatibilidad, pero el

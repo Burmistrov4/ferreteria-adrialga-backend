@@ -55,6 +55,21 @@ async function main() {
   });
   console.log('✅ Cliente Consumidor Final listo:', clienteConsumidor.RIF_Cedula);
 
+  // Datos legales de la tienda (encabezado de facturas/tickets PDF).
+  // Idempotente: sin unique natural, se resuelve por findFirst+update/create.
+  const configExistente = await prisma.configuracion_tienda.findFirst();
+  if (!configExistente) {
+    await prisma.configuracion_tienda.create({
+      data: {
+        Nombre: 'Ferretería Adrialga C.A.',
+        RIF: 'J-30123456-8',
+        Direccion: 'Av. Principal, Sector Centro, Local 5, Punto Fijo, Falcón',
+        Telefono: '0268-123-4567'
+      }
+    });
+    console.log('✅ Configuración de tienda creada (Ferretería Adrialga C.A.)');
+  }
+
   console.log('✅ Usuario Admin listo:', usuario.Credencial);
   console.log(
     '✅ Usuario Supervisor listo:',

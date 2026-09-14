@@ -52,6 +52,11 @@ model productos {
   Nombre                String                  @db.VarChar(150)
   Precio_Venta          Decimal                 @default(0.0000) @db.Decimal(18, 6)
   Costo_Promedio        Decimal                 @default(0.0000) @db.Decimal(18, 6)
+  /// Margen bruto configurado en % sobre el costo (ej. 25 = 25%).
+  /// Precio_Venta = Costo_Ultimo * (1 + Margen_Ganancia/100) cuando ambos se envían.
+  Margen_Ganancia       Decimal                 @default(0.0000) @db.Decimal(18, 6)
+  /// Último costo de compra registrado (base del cálculo de precio sugerido).
+  Costo_Ultimo          Decimal                 @default(0.0000) @db.Decimal(18, 6)
   Stock_Actual          Int                     @default(0)
   Stock_Minimo          Int                     @default(5)
   Categoria_ID          Int
@@ -59,6 +64,7 @@ model productos {
   Fecha_Registro        DateTime                @default(now()) @db.Timestamp(0)
   detalle_facturas      detalle_facturas[]
   detalle_notas_entrega detalle_notas_entrega[]
+  producto_variantes    producto_variantes[]
   categorias            categorias              @relation(fields: [Categoria_ID], references: [Categoria_ID], map: "FK_Productos_Categorias")
 
   @@index([Categoria_ID], map: "IDX_Productos_Categoria")
@@ -235,12 +241,54 @@ model cuentas_por_pagar {
   @@index([Estatus], map: "IDX_CxP_Estatus")
 }
 
-// Contadores secuenciales fiscales (número de control SENIAT).
+// ───────────────────────── Inventario Matricial (Tarea 5) ─────────────────
+// ProductoVariante: fila por combinación de atributos (ej. Color=Gris,
+// Talla=M). Un producto sin variantes opera a través de una variante
+// "por defecto" idéntica al registro original (ver migrate_variantes).
+model producto_variantes {
+  Variante_ID    Int                 @id @default(autoincrement())
+  Producto_ID    Int
+  SKU_Variante   String              @unique(map: "UQ_Variante_SKU") @db.VarChar(60)
+  Costo_Unitario Decimal             @default(0.0000) @db.Decimal(18, 6)
+  Precio_Venta   Decimal             @default(0.0000) @db.Decimal(18, 6)
+  Stock_Actual   Int                 @default(0)
+  Activo         Boolean             @default(true)
+  Fecha_Registro DateTime            @default(now()) @db.Timestamp(0)
+  productos      productos           @relation(fields: [Producto_ID], references: [Producto_ID], map: "FK_Variantes_Producto")
+  atributos      variante_atributos[]
+
+  @@index([Producto_ID], map: "IDX_Variantes_Producto")
+}
+
+// Atributo de una variante (par nombre/valor): ej. Atributo="Color", Valor="Gris".
+model variante_atributos {
+  Atributo_ID Int                @id @default(autoincrement())
+  Variante_ID Int
+  Atributo    String             @db.VarChar(50)
+  Valor       String             @db.VarChar(60)
+  variante    producto_variantes @relation(fields: [Variante_ID], references: [Variante_ID], onDelete: Cascade, map: "FK_VarAttr_Variante")
+
+  @@unique([Variante_ID, Atributo], map: "UQ_VarAttr")
+  @@index([Variante_ID], map: "IDX_VarAttr_Variante")
+}
+
+// Contadores secuenciales fiscales (nmero de control SENIAT).
 // Cada fila guarda una serie: p.ej. Clave="CTRL-VENTAS-2026", Valor=n.
 // El incremento es atómico (upsert + increment) dentro de la transacción de
 // la factura, garantizando secuencia única sin huecos por carrera.
-model contadores_fiscales {
-  Id    Int    @id @default(autoincrement())
+// Datos legales de la tienda (encabezado de facturas/tickets PDF).
+// Una sola fila surtida por el seed; el backend aplica fallback si falta.
+model configuracion_tienda {
+  Config_ID Int    @id @default(autoincrement())
+  Nombre    String @db.VarChar(150)
+  RIF       String @db.VarChar(20)
+  Direccion String @db.VarChar(255)
+  Telefono  String @db.VarChar(25) @default("")
+
+  @@map("configuracion_tienda")
+}
+
+model contadores_fiscales {  Id    Int    @id @default(autoincrement())
   Clave String @unique(map: "UQ_Contadores_Clave") @db.VarChar(60)
   Valor Int    @default(0)
 }

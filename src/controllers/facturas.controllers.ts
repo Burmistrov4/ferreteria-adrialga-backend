@@ -168,6 +168,19 @@ export const createFactura = async (req: AuthRequest, res: Response) => {
     });
   }
 
+  // El cliente debe EXISTIR en el maestro: el frontend nunca fuerza un ID
+  // hardcodeado; se exige selección explícita (o el checkbox "Consumidor
+  // Final" que resuelve a un registro real V-00000000 creado por el seed).
+  const clienteExiste = await prisma.clientes.findUnique({
+    where: { Cliente_ID: Number(Cliente_ID) },
+    select: { Cliente_ID: true },
+  });
+  if (!clienteExiste) {
+    return res.status(404).json({
+      message: 'El cliente seleccionado no existe. Revise la asignación antes de cobrar.'
+    });
+  }
+
   // Detalle de pagos (multipago) enviado por el módulo de cobro del POS.
   // Shape esperado: { efectivoUSD, efectivoVES, pagoMovil, puntoVenta, referencia? }
   const dp = req.body.Detalles_Pago ?? req.body.detallesPago ?? {};
