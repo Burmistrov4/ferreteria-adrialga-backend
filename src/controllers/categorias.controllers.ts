@@ -17,7 +17,7 @@ export const getCategorias = async (_req: Request, res: Response) => {
 export const updateCategoria = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { Nombre, Prefijo_SKU, Descripcion, Activo } = req.body;
+    const { Nombre, Prefijo_SKU, Descripcion, Activo, Margen_Sugerido } = req.body;
 
     if (Prefijo_SKU !== undefined && !REGEX_PREFIJO.test(Prefijo_SKU)) {
       return res.status(400).json({
@@ -31,6 +31,9 @@ export const updateCategoria = async (req: Request, res: Response) => {
         Nombre,
         Prefijo_SKU,
         Descripcion,
+        Margen_Sugerido: Margen_Sugerido !== undefined
+          ? (Margen_Sugerido === null ? null : Number(Margen_Sugerido))
+          : undefined,
         Activo: Activo !== undefined ? Activo : undefined
       }
     });
@@ -62,7 +65,7 @@ export const deleteCategoria = async (req: Request, res: Response) => {
 
 export const createCategoria = async (req: Request, res: Response) => {
   try {
-    const { Nombre, Prefijo_SKU, Descripcion } = req.body;
+    const { Nombre, Prefijo_SKU, Descripcion, Margen_Sugerido } = req.body;
 
     if (!Nombre || !String(Nombre).trim()) {
       return res.status(400).json({ message: 'El nombre de la categoría es obligatorio' });
@@ -85,7 +88,10 @@ export const createCategoria = async (req: Request, res: Response) => {
       data: {
         Nombre: String(Nombre).trim(),
         Prefijo_SKU: prefijo,
-        Descripcion
+        Descripcion,
+        Margen_Sugerido: Margen_Sugerido !== undefined && Margen_Sugerido !== null
+          ? Number(Margen_Sugerido)
+          : null,
       }
     });
 
