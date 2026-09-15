@@ -61,20 +61,28 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
       // ── Validación explícita de productos (fail-fast, antes de escribir) ──
       const productosVigentes = new Map<
         number,
-        { stock: number; costoD4: bigint }
+        { stock: number; costoD4: bigint; margen: number; varianteId: number | null }
       >();
       for (const item of detalles) {
         const producto = await tx.productos.findUnique({
-          where: { Producto_ID: Number(item.Producto_ID) }
+          where: { Producto_ID: Number(item.Producto_ID) },
+          include: { categorias: { select: { Margen_Sugerido: true } } },
         });
         if (!producto || !producto.Activo) {
           throw new Error(
             `VALIDACION:El producto con ID ${item.Producto_ID} no existe o está inactivo`
           );
         }
+        // Margen efectivo del producto: propio o heredado de la categoría.
+        const margenProp = Number(producto.Margen_Ganancia);
+        const margenCat = producto.categorias?.Margen_Sugerido != null
+          ? Number(producto.categorias.Margen_Sugerido)
+          : 0;
         productosVigentes.set(Number(item.Producto_ID), {
           stock: Number(producto.Stock_Actual),
-          costoD4: toD4(producto.Costo_Promedio)
+          costoD4: toD4(producto.Costo_Promedio),
+          margen: margenProp > 0 ? margenProp : margenCat,
+          varianteId: item.Variante_ID != null ? Number(item.Variante_ID) : null,
         });
       }
 
@@ -94,7 +102,8 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
             cantidad,
             cantidadD4: toD4(cantidad),
             costoD4: costoEntrada,
-            recalculaCpp: true
+            recalculaCpp: true,
+            varianteId: vigente.varianteId
           };
         }
         return {
@@ -102,7 +111,8 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
           cantidad,
           cantidadD4: toD4(cantidad),
           costoD4: vigente.costoD4,
-          recalculaCpp: false
+          recalculaCpp: false,
+          varianteId: vigente.varianteId
         };
       });
 
@@ -145,6 +155,9 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
         // Si Stock_actual = 0 → CPP_nuevo = Costo de compra directamente.
         let cppNuevo = vigente.costoD4;
         if (d.recalculaCpp) {
+          // CPP = ((stockPrev × cppPrev) + (qty × costoCompra)) / (stockPrev + qty).
+          // Fallback stock-cero: stockPrev + qty == cantidad → costo directo,
+          // NUNCA divide entre cero (condición cubierta por vigente.stock >= 0).
           cppNuevo =
             vigente.stock > 0
               ? divD4(
@@ -157,6 +170,14 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
               : d.costoD4;
         }
 
+        // Recálculo de precio con el margen del producto tras el nuevo CPP
+        // (margen heredado por cascada; 0 → se conserva el precio actual).
+        let precioNuevo: number | undefined;
+        if (d.recalculaCpp && vigente.margen > 0) {
+          const base = Number(cppNuevo) / 10000;
+          precioNuevo = Number((base * (1 + vigente.margen / 100)).toFixed(6));
+        }
+
         await tx.productos.update({
           where: { Producto_ID: d.productoId },
           data: {
@@ -165,8 +186,40 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
             // Costo_Ultimo refleja la última compra con costo explícito —
             // base del precio sugerido (Precio = Costo*(1+Margen%)) en la UI.
             ...(d.recalculaCpp ? { Costo_Ultimo: aDecimal(d.costoD4) } : {}),
+            ...(precioNuevo !== undefined ? { Precio_Venta: precioNuevo } : {}),
           }
         });
+
+        // ── Variante a nivel matriz (si la nota la especifica) ─────────────
+        // Suma stock a la variante, actualiza su costo y, si el producto o su
+        // variante tienen margen, recalcula su precio con la cascada
+        // Variante → Producto (la base vigente.margen ya cubre la categoría).
+        if (d.varianteId != null) {
+          const variant = await tx.producto_variantes.findUnique({
+            where: { Variante_ID: d.varianteId },
+          });
+          if (variant && variant.Producto_ID === d.productoId) {
+            const mVar = variant.Margen_Ganancia != null
+              ? Number(variant.Margen_Ganancia)
+              : null;
+            const margenEfectivo = mVar ?? vigente.margen;
+            const nuevoStockVar = variant.Stock_Actual + d.cantidad;
+            const nuevoCostoVar =
+              d.recalculaCpp ? Number(d.costoD4) / 10000 : Number(variant.Costo_Unitario);
+            const nuevoPrecioVar =
+              d.recalculaCpp && margenEfectivo > 0
+                ? Number((nuevoCostoVar * (1 + margenEfectivo / 100)).toFixed(6))
+                : undefined;
+            await tx.producto_variantes.update({
+              where: { Variante_ID: d.varianteId },
+              data: {
+                Stock_Actual: nuevoStockVar,
+                ...(d.recalculaCpp ? { Costo_Unitario: nuevoCostoVar } : {}),
+                ...(nuevoPrecioVar !== undefined ? { Precio_Venta: nuevoPrecioVar } : {}),
+              },
+            });
+          }
+        }
       }
 
       // ── Impacto en Tesorería (dentro de la misma transacción) ──────────

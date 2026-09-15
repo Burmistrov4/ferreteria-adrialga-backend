@@ -11,6 +11,9 @@ model categorias {
   Categoria_ID   Int         @id @default(autoincrement())
   Nombre         String      @db.VarChar(100)
   Prefijo_SKU    String      @default("GEN") @db.VarChar(3)
+  // Margen sugerido en % por defecto para productos nuevos de la categoría
+  // (raíz de la cascada: Variante → Producto → Categoría).
+  Margen_Sugerido Decimal?   @db.Decimal(18, 6)
   Descripcion    String?     @db.VarChar(255)
   Activo         Boolean     @default(true)
   Fecha_Registro DateTime    @default(now()) @db.Timestamp(0)
@@ -251,6 +254,9 @@ model producto_variantes {
   SKU_Variante   String              @unique(map: "UQ_Variante_SKU") @db.VarChar(60)
   Costo_Unitario Decimal             @default(0.0000) @db.Decimal(18, 6)
   Precio_Venta   Decimal             @default(0.0000) @db.Decimal(18, 6)
+  // Margen específico de la variante. Null → hereda del producto padre (que
+  // a su vez puede heredar de la categoría si el producto tampoco tiene).
+  Margen_Ganancia Decimal?           @db.Decimal(18, 6)
   Stock_Actual   Int                 @default(0)
   Activo         Boolean             @default(true)
   Fecha_Registro DateTime            @default(now()) @db.Timestamp(0)

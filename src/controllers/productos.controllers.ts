@@ -210,6 +210,7 @@ export const getVariantesDeProducto = async (req: Request, res: Response) => {
     const producto = await prisma.productos.findUnique({
       where: { Producto_ID: id },
       include: {
+        categorias: { select: { Margen_Sugerido: true } },
         producto_variantes: {
           where: { Activo: true },
           include: { atributos: true },
@@ -220,6 +221,13 @@ export const getVariantesDeProducto = async (req: Request, res: Response) => {
     if (!producto) {
       return res.status(404).json({ message: 'Producto no encontrado' });
     }
+
+    // Cascada de margen: Variante → Producto → Categoría → 0.
+    const margenPadre = Number(producto.Margen_Ganancia);
+    const margenCat = producto.categorias?.Margen_Sugerido != null
+      ? Number(producto.categorias.Margen_Sugerido)
+      : 0;
+    const margenBase = margenPadre > 0 ? margenPadre : margenCat;
 
     // Ejes de la matriz: { Atributo → [valores únicos] }.
     const ejes: Record<string, string[]> = {};
@@ -234,16 +242,23 @@ export const getVariantesDeProducto = async (req: Request, res: Response) => {
       productoId: producto.Producto_ID,
       skuBase: producto.SKU_Codigo,
       nombre: producto.Nombre,
-      matriz: producto.producto_variantes.map((v) => ({
-        varianteId: v.Variante_ID,
-        sku: v.SKU_Variante,
-        precio: Number(v.Precio_Venta),
-        costo: Number(v.Costo_Unitario),
-        stock: v.Stock_Actual,
-        atributos: Object.fromEntries(
-          v.atributos.map((a) => [a.Atributo, a.Valor])
-        ),
-      })),
+      matriz: producto.producto_variantes.map((v) => {
+        const margenPropio = v.Margen_Ganancia != null ? Number(v.Margen_Ganancia) : null;
+        return {
+          varianteId: v.Variante_ID,
+          sku: v.SKU_Variante,
+          precio: Number(v.Precio_Venta),
+          costo: Number(v.Costo_Unitario),
+          stock: v.Stock_Actual,
+          // Margen propio (null → la UI muestra "Heredado") y el resuelto
+          // definitivo aplicado por la cascada Variante→Producto→Categoría.
+          margenPropio,
+          margenEfectivo: margenPropio ?? margenBase,
+          atributos: Object.fromEntries(
+            v.atributos.map((a) => [a.Atributo, a.Valor])
+          ),
+        };
+      }),
       ejes,
     });
   } catch (error) {
@@ -252,12 +267,130 @@ export const getVariantesDeProducto = async (req: Request, res: Response) => {
   }
 };
 
+/**
+ * POST /api/productos/:id/variantes/bulk
+ *
+ * Alta masiva de variantes (producto cartesiano de atributos del UI).
+ * Idempotente: hace upsert por SKU_Variante y teletransporta atributos.
+ * Shape entrante: { variantes: [{ sku, atributos: {Atributo: Valor}, costo,
+ *   precio, stock }] }
+ */
+export const crearVariantesBulk = async (req: Request, res: Response) => {
+  try {
+    const productoId = Number(req.params.id);
+    const variantes = req.body?.variantes;
+    if (!Number.isFinite(productoId)) {
+      return res.status(400).json({ message: 'ID de producto inválido' });
+    }
+    if (!Array.isArray(variantes) || variantes.length === 0) {
+      return res.status(400).json({ message: 'Se requiere al menos una variante' });
+    }
+
+    const producto = await prisma.productos.findUnique({
+      where: { Producto_ID: productoId },
+      select: { Producto_ID: true, SKU_Codigo: true },
+    });
+    if (!producto) return res.status(404).json({ message: 'Producto no encontrado' });
+
+    const resultado = await prisma.$transaction(async (tx) => {
+      const creadas: number[] = [];
+      const actualizadas: number[] = [];
+      for (const [i, v] of variantes.entries()) {
+        const sku = String(v?.sku ?? `${producto.SKU_Codigo}-V${i + 1}`).trim();
+        const costo = Number(v?.costo ?? 0) || 0;
+        const precio = Number(v?.precio ?? 0) || 0;
+        const stock = Number(v?.stock ?? 0) || 0;
+        const atributos = (v?.atributos ?? {}) as Record<string, string>;
+
+        const existente = await tx.producto_variantes.findUnique({
+          where: { SKU_Variante: sku },
+          select: { Variante_ID: true },
+        });
+        const fila = await tx.producto_variantes.upsert({
+          where: { SKU_Variante: sku },
+          create: { Producto_ID: productoId, SKU_Variante: sku, Costo_Unitario: costo, Precio_Venta: precio, Stock_Actual: stock },
+          update: { Costo_Unitario: costo, Precio_Venta: precio, Stock_Actual: stock },
+        });
+        // Sincronizar atributos: borra los anteriores y reinserta los nuevos
+        // (volumen bajo por variante, simple y consistente).
+        await tx.variante_atributos.deleteMany({ where: { Variante_ID: fila.Variante_ID } });
+        const entradas = Object.entries(atributos)
+          .filter(([k, val]) => k.trim() !== '' && String(val).trim() !== '');
+        if (entradas.length > 0) {
+          await tx.variante_atributos.createMany({
+            data: entradas.map(([k, val]) => ({
+              Variante_ID: fila.Variante_ID,
+              Atributo: k.trim(),
+              Valor: String(val).trim(),
+            })),
+          });
+        }
+        (existente == null ? creadas : actualizadas).push(fila.Variante_ID);
+      }
+      return { creadas: creadas.length, actualizadas: actualizadas.length };
+    });
+
+    res.status(201).json({ ok: true, ...resultado });
+  } catch (error: any) {
+    if (error?.code === 'P2002') {
+      return res
+        .status(409)
+        .json({ message: 'SKU de variante en conflicto con otra existente' });
+    }
+    console.error('Error en bulk de variantes:', error);
+    res.status(500).json({ message: 'Error al crear las variantes' });
+  }
+};
+
+/** PATCH /api/variantes/:id — edición rápida inline (stock/costo/precio). */
+export const actualizarVariante = async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: 'ID de variante inválido' });
+    }
+    const { stock, costo, precio, activo, margen } = req.body ?? {};
+    const actualizada = await prisma.producto_variantes
+      .update({
+        where: { Variante_ID: id },
+        data: {
+          Stock_Actual: stock !== undefined ? Number(stock) : undefined,
+          Costo_Unitario: costo !== undefined ? Number(costo) : undefined,
+          Precio_Venta: precio !== undefined ? Number(precio) : undefined,
+          // margen: null explícito = "heredar" (quitar margen propio de la variante)
+          Margen_Ganancia: margen !== undefined
+            ? (margen === null ? null : Number(margen))
+            : undefined,
+          Activo: typeof activo === 'boolean' ? activo : undefined,
+        },
+      })
+      .catch(() => null);
+    if (!actualizada) {
+      return res.status(404).json({ message: 'Variante no encontrada' });
+    }
+    res.json({
+      varianteId: actualizada.Variante_ID,
+      stock: Number(actualizada.Stock_Actual),
+      costo: Number(actualizada.Costo_Unitario),
+      precio: Number(actualizada.Precio_Venta),
+      activo: actualizada.Activo,
+    });
+  } catch (error) {
+    console.error('Error al actualizar variante:', error);
+    res.status(500).json({ message: 'Error al actualizar la variante' });
+  }
+};
+
 export const deleteProducto = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
-    await prisma.productos.delete({
-      where: { Producto_ID: Number(id) }
-    });
+    const id = Number(req.params.id);
+    // Eliminar primero las variantes del producto (y sus atributos por
+    // cascade del FK) para no dejar SKUs huérfanos que colisionen con el
+    // bulk de otro producto.
+    await prisma.$transaction([
+      prisma.producto_variantes.deleteMany({ where: { Producto_ID: id } }),
+      prisma.productos.delete({ where: { Producto_ID: id } }),
+    ]);
     res.json({ message: 'Producto eliminado correctamente' });
   } catch (error) {
     res.status(500).json({ message: 'Error al eliminar el producto', error });
