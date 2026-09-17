@@ -128,18 +128,22 @@ model facturas {
 }
 
 model detalle_facturas {
-  Detalle_ID               Int       @id @default(autoincrement())
+  Detalle_ID               Int                  @id @default(autoincrement())
   Factura_ID               Int
   Producto_ID              Int
+  /// Variante exacta vendida (null = producto lineal sin matriz).
+  Variante_ID              Int?
   Cantidad                 Int
-  Precio_Unitario          Decimal   @default(0.0000) @db.Decimal(18, 6)
-  Costo_Unitario_Historico Decimal   @default(0.0000) @db.Decimal(18, 6)
-  Subtotal                 Decimal?  @db.Decimal(18, 6)
-  facturas                 facturas  @relation(fields: [Factura_ID], references: [Factura_ID], onDelete: Cascade, map: "FK_DetalleFactura_Facturas")
-  productos                productos @relation(fields: [Producto_ID], references: [Producto_ID], map: "FK_DetalleFactura_Productos")
+  Precio_Unitario          Decimal              @default(0.0000) @db.Decimal(18, 6)
+  Costo_Unitario_Historico Decimal              @default(0.0000) @db.Decimal(18, 6)
+  Subtotal                 Decimal?             @db.Decimal(18, 6)
+  facturas                 facturas             @relation(fields: [Factura_ID], references: [Factura_ID], onDelete: Cascade, map: "FK_DetalleFactura_Facturas")
+  productos                productos            @relation(fields: [Producto_ID], references: [Producto_ID], map: "FK_DetalleFactura_Productos")
+  producto_variantes       producto_variantes?  @relation(fields: [Variante_ID], references: [Variante_ID], map: "FK_DetalleFactura_Variante")
 
   @@index([Factura_ID], map: "FK_DetalleFactura_Facturas")
   @@index([Producto_ID], map: "IDX_DetalleFacturas_Producto")
+  @@index([Variante_ID], map: "IDX_DetalleFacturas_Variante")
 }
 
 model notas_entrega_entrada {
@@ -262,6 +266,7 @@ model producto_variantes {
   Fecha_Registro DateTime            @default(now()) @db.Timestamp(0)
   productos      productos           @relation(fields: [Producto_ID], references: [Producto_ID], map: "FK_Variantes_Producto")
   atributos      variante_atributos[]
+  detalle_facturas detalle_facturas[]
 
   @@index([Producto_ID], map: "IDX_Variantes_Producto")
 }
@@ -285,11 +290,13 @@ model variante_atributos {
 // Datos legales de la tienda (encabezado de facturas/tickets PDF).
 // Una sola fila surtida por el seed; el backend aplica fallback si falta.
 model configuracion_tienda {
-  Config_ID Int    @id @default(autoincrement())
-  Nombre    String @db.VarChar(150)
-  RIF       String @db.VarChar(20)
-  Direccion String @db.VarChar(255)
-  Telefono  String @db.VarChar(25) @default("")
+  Config_ID   Int    @id @default(autoincrement())
+  Nombre      String @db.VarChar(150)
+  RIF         String @db.VarChar(20)
+  Direccion   String @db.VarChar(255)
+  Telefono    String @db.VarChar(25) @default("")
+  /// Línea legal al pie del ticket/PDF (devoluciones, web, leyenda).
+  Mensaje_Pie String @default("") @db.VarChar(255)
 
   @@map("configuracion_tienda")
 }

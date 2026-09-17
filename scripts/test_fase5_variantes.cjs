@@ -44,11 +44,26 @@ const b = 'http://localhost:3000/api';
   r = await fetch(b + '/productos/' + p.Producto_ID + '/variantes', { headers: h });
   console.log('filas tras repeat:', (await r.json()).matriz.length);
 
-  // Limpieza: borrar variantes y producto
-  const jj = (await (await fetch(b + '/productos/' + p.Producto_ID + '/variantes', { headers: h })).json());
-  for (const v of jj.matriz) {
-    await fetch('http://localhost:3000/api/productos/variantes/' + v.varianteId, { headers: h }).catch(() => {});
-  }
+  // -- Escenario NUEVO: guardado parcial NO pisa valores previos (bug "0" F5.2)
+  // Enviamos SOLO atributos, sin costo/precio/stock → el upsert debe dejarlo
+  // exactamente como estaba.
+  r = await fetch(b + '/productos/' + p.Producto_ID + '/variantes/bulk', {
+    method: 'POST', headers: h, body: JSON.stringify({
+      variantes: [{ sku: 'TEST-V1-AZUL-S', atributos: { Color: 'Azul', Talla: 'S' } }]
+    })
+  });
+  console.log('bulk sin precios:', r.status);
+  r = await fetch(b + '/productos/' + p.Producto_ID + '/variantes', { headers: h });
+  const azul = (await r.json()).matriz.find(v => v.sku === 'TEST-V1-AZUL-S');
+  console.log('STOCK preservado:', azul.stock === 2, azul.stock, 'PRECIO preservado:', Math.abs(azul.precio - 15) < 0.01, azul.precio);
+
+  // Soft delete de una variante
+  r = await fetch(b + '/productos/variantes/' + azul.varianteId, { method: 'DELETE', headers: h });
+  console.log('soft-delete:', r.status);
+  const trasDelete = await (await fetch(b + '/productos/' + p.Producto_ID + '/variantes', { headers: h })).json();
+  console.log('matriz ya NO la muestra (soft-delete oculta):', !trasDelete.matriz.some(v => v.sku === 'TEST-V1-AZUL-S'), 'filas restantes:', trasDelete.matriz.length);
+
+  // Limpieza
   await fetch(b + '/productos/' + p.Producto_ID, { method: 'DELETE', headers: h });
   console.log('limpieza ok');
 })().catch(e => console.error(e));

@@ -273,6 +273,12 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
       }
 
       return nuevaNota;
+    }, {
+      // La entrada recalcula CPP + costo/precio por ítem (y su variante) y
+      // registra el impacto en tesorería: elevar timeout para motores fríos
+      // (el default de 5s expiraba en el primer arranque y abortaba la tx).
+      timeout: 30000,
+      maxWait: 20000
     });
 
     return res.status(201).json({ message: 'Nota de entrega registrada con éxito', nota: resultado });

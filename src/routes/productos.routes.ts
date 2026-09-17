@@ -7,6 +7,7 @@ import {
   getVariantesDeProducto,
   crearVariantesBulk,
   actualizarVariante,
+  eliminarVariante,
 } from '../controllers/productos.controllers';
 import { authenticateToken } from '../middlewares/auth.middleware';
 
@@ -17,6 +18,7 @@ router.get('/', getProductos);
 router.get('/:id/variantes', getVariantesDeProducto);
 router.post('/:id/variantes/bulk', crearVariantesBulk);
 router.patch('/variantes/:id', actualizarVariante);
+router.delete('/variantes/:id', eliminarVariante);
 router.post('/', createProducto);
 router.put('/:id', updateProducto);
 router.delete('/:id', deleteProducto);
