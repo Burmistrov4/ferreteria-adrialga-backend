@@ -11,6 +11,7 @@ const FALLBACK = {
   rif: 'J-00000000-0',
   direccion: 'Dirección no configurada',
   telefono: '0000-0000000',
+  mensajePie: 'Gracias por su compra',
 };
 
 export const getConfiguracion = async (_req: Request, res: Response) => {
@@ -22,6 +23,7 @@ export const getConfiguracion = async (_req: Request, res: Response) => {
       rif: config.RIF,
       direccion: config.Direccion,
       telefono: config.Telefono,
+      mensajePie: config.Mensaje_Pie,
     });
   } catch (error) {
     console.error('Error al obtener configuración:', error);
@@ -32,7 +34,7 @@ export const getConfiguracion = async (_req: Request, res: Response) => {
 
 export const updateConfiguracion = async (req: Request, res: Response) => {
   try {
-    const { nombre, rif, direccion, telefono } = req.body ?? {};
+    const { nombre, rif, direccion, telefono, mensajePie } = req.body ?? {};
     if (!nombre || !rif || !direccion) {
       return res.status(400).json({
         message: 'nombre, rif y direccion son obligatorios',
@@ -44,6 +46,7 @@ export const updateConfiguracion = async (req: Request, res: Response) => {
       RIF: String(rif).toUpperCase().trim(),
       Direccion: String(direccion).trim(),
       Telefono: String(telefono ?? '').trim(),
+      Mensaje_Pie: String(mensajePie ?? '').trim(),
     };
     const guardada = actual
       ? await prisma.configuracion_tienda.update({
@@ -56,6 +59,7 @@ export const updateConfiguracion = async (req: Request, res: Response) => {
       rif: guardada.RIF,
       direccion: guardada.Direccion,
       telefono: guardada.Telefono,
+      mensajePie: guardada.Mensaje_Pie,
     });
   } catch (error) {
     console.error('Error al actualizar configuración:', error);

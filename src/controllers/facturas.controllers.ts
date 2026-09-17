@@ -1,9 +1,9 @@
-import { Request, Response } from 'express';
+﻿import { Request, Response } from 'express';
 import { prisma } from '../config/db';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import { normalizarPeriodo, calcularRango, rangoPersonalizado } from '../utils/fechas';
 import { toD4, addD4, mulD4, divD4, aDecimal, IVA_ALIQUOTA, IGTF_ALIQUOTA, CIEN } from '../utils/dinero';
-import { exigirCajaAbierta, CajaCerradaError, ArqueoPendienteError } from '../utils/caja';
+import { exigirCajaAbierta, CajaCerradaError, ArqueoPendienteError, esEfectivo } from '../utils/caja';
 import { validarPinSupervisorHash } from '../utils/pin_supervisor';
 
 /**
@@ -120,7 +120,7 @@ export const getFacturas = async (req: Request, res: Response) => {
       include: {
         clientes: true,
         usuarios: { select: { Usuario_ID: true, Nombre: true } },
-        detalle_facturas: { include: { productos: true } },
+        detalle_facturas: { include: { productos: true, producto_variantes: { include: { atributos: true } } } },
         pagos: true
       }
     });
@@ -138,7 +138,7 @@ export const getFacturaById = async (req: Request, res: Response) => {
       include: {
         clientes: true,
         usuarios: { select: { Usuario_ID: true, Nombre: true } },
-        detalle_facturas: { include: { productos: true } },
+        detalle_facturas: { include: { productos: true, producto_variantes: { include: { atributos: true } } } },
         pagos: true
       }
     });
@@ -230,17 +230,37 @@ export const createFactura = async (req: AuthRequest, res: Response) => {
 
   try {
     const resultado = await prisma.$transaction(async (tx) => {
-      // 1. Validar stock disponible y capturar el costo promedio vigente de cada producto
-      const costosPorProducto = new Map<number, bigint>();
+      // 1. Validar stock disponible (producto y variante, si aplica) y
+      //    capturar el costo vigente usado para el margen histórico.
+      const costosPorDetalle = new Map<number, bigint>();
       for (const item of detalles) {
         const prod = await tx.productos.findUnique({
           where: { Producto_ID: Number(item.Producto_ID) }
         });
 
-        if (!prod || prod.Stock_Actual < Number(item.Cantidad)) {
-          throw new Error(`Stock insuficiente para el producto: ${prod?.Nombre || item.Producto_ID}`);
+        if (!prod) {
+          throw new Error(`Stock insuficiente para el producto: ${item.Producto_ID}`);
         }
-        costosPorProducto.set(Number(item.Producto_ID), toD4(prod.Costo_Promedio));
+
+        let costoLinea = toD4(prod.Costo_Promedio);
+        if (item.Variante_ID != null) {
+          const variante = await tx.producto_variantes.findUnique({
+            where: { Variante_ID: Number(item.Variante_ID) }
+          });
+          if (!variante || variante.Producto_ID !== prod.Producto_ID) {
+            throw new Error(`Variante inválida para el producto: ${prod.Nombre}`);
+          }
+          if (variante.Stock_Actual < Number(item.Cantidad)) {
+            throw new Error(
+              `Stock insuficiente de la variante ${variante.SKU_Variante} (dispone: ${variante.Stock_Actual})`
+            );
+          }
+          // El margen histórico de una variante usa su costo real (no el CPP del padre).
+          costoLinea = toD4(variante.Costo_Unitario);
+        } else if (prod.Stock_Actual < Number(item.Cantidad)) {
+          throw new Error(`Stock insuficiente para el producto: ${prod.Nombre}`);
+        }
+        costosPorDetalle.set(Number(item.Producto_ID) + (item.Variante_ID ?? 0) * 1_000_000, costoLinea);
       }
 
       // 3. Crear cabecera y detalles de la factura (montos exactos a 4 decimales)
@@ -265,14 +285,16 @@ export const createFactura = async (req: AuthRequest, res: Response) => {
             create: detalles.map((d: any) => {
               const cantidad = toD4(d.Cantidad);
               const precio = toD4(d.Precio_Unitario);
+              const key = Number(d.Producto_ID) + (d.Variante_ID ?? 0) * 1_000_000;
               return {
                 Producto_ID: Number(d.Producto_ID),
+                Variante_ID: d.Variante_ID != null ? Number(d.Variante_ID) : undefined,
                 Cantidad: Number(d.Cantidad),
                 Precio_Unitario: aDecimal(precio),
-                // Congela el costo promedio ponderado vigente al momento de la venta
-                // para poder calcular el margen de ganancia histórico.
+                // Congela el costo vigente (CPP padre o costo real de variante)
+                // para margen histórico exacto por ítem vendido.
                 Costo_Unitario_Historico: aDecimal(
-                  costosPorProducto.get(Number(d.Producto_ID)) ?? 0n
+                  costosPorDetalle.get(key) ?? 0n
                 ),
                 Subtotal: aDecimal(mulD4(cantidad, precio))
               };
@@ -292,12 +314,19 @@ export const createFactura = async (req: AuthRequest, res: Response) => {
         }
       });
 
-      // 4. Descontar el stock de los productos vendidos
+      // 4. Descontar el stock de los productos vendidos (y de la variante
+      //    específica cuando la venta es matricial: ambos bajan a la par).
       for (const item of detalles) {
         await tx.productos.update({
           where: { Producto_ID: Number(item.Producto_ID) },
           data: { Stock_Actual: { decrement: Number(item.Cantidad) } }
         });
+        if (item.Variante_ID != null) {
+          await tx.producto_variantes.update({
+            where: { Variante_ID: Number(item.Variante_ID) },
+            data: { Stock_Actual: { decrement: Number(item.Cantidad) } }
+          });
+        }
       }
 
       // 5. Impacto en Tesorería: INGRESO en caja por cada pago recibido
@@ -305,7 +334,18 @@ export const createFactura = async (req: AuthRequest, res: Response) => {
       if (pagosNormalizados.length > 0) {
         // Regla de negocio (arqueo): toda venta exige un turno de caja abierto.
         const caja = await exigirCajaAbierta(tx);
-        const sumaPagos = pagosNormalizados.reduce((acc, p) => addD4(acc, p.monto), 0n);
+        // Solo el EFECTIVO (USD/VES físico) altera el saldo de la gaveta.
+        // Digitales (Pago Móvil, Punto, Zelle...) van al banco — se auditan
+        // en movimientos_caja pero no contaminan el arqueo físico.
+        const sumaEfectivo = pagosNormalizados
+          .filter((p) => esEfectivo(p.metodo))
+          .reduce((acc, p) => addD4(acc, p.monto), 0n);
+        if (sumaEfectivo > 0n) {
+          await tx.caja.update({
+            where: { Caja_ID: caja.Caja_ID },
+            data: { Saldo_Actual: { increment: aDecimal(sumaEfectivo) } }
+          });
+        }
         for (const p of pagosNormalizados) {
           await tx.movimientos_caja.create({
             data: {
@@ -321,16 +361,33 @@ export const createFactura = async (req: AuthRequest, res: Response) => {
             }
           });
         }
-        await tx.caja.update({
-          where: { Caja_ID: caja.Caja_ID },
-          data: { Saldo_Actual: { increment: aDecimal(sumaPagos) } }
-        });
       }
 
       return nuevaFactura;
+    }, {
+      // La factura congela CMP por línea, escribe pagos y movimientos de
+      // caja: con engine frío el default de 5s expiraba a media tx (bug
+      // detectado en smoke e2e). 30s de holgura, cola de 20s.
+      timeout: 30000,
+      maxWait: 20000
     });
 
-    return res.status(201).json({ message: 'Factura registrada exitosamente', factura: resultado });
+    // Hidratación completa post-commit para el comprobante de venta (ticket
+    // térmico/PDF inmediato devuelve todos los detalles, pagos y cliente).
+    const facturaCompleta = await prisma.facturas.findUnique({
+      where: { Factura_ID: resultado.Factura_ID },
+      include: {
+        clientes: true,
+        usuarios: true,
+        pagos: true,
+        detalle_facturas: { include: { productos: true, producto_variantes: { include: { atributos: true } } } }
+      }
+    });
+
+    return res.status(201).json({
+      message: 'Factura registrada exitosamente',
+      factura: sanitizarFactura(facturaCompleta)
+    });
   } catch (error: any) {
     // Serialización por instancia (no por status): un 409 puede significar
     // caja cerrada O arqueo pendiente de una jornada anterior.
@@ -412,14 +469,15 @@ export const reversarVenta = async (req: AuthRequest, res: Response) => {
       // A. Turno de caja abierto obligatorio.
       const caja = await exigirCajaAbierta(tx);
 
-      // Total a devolver y verificación de fondo (CERO DÉFICIT).
-      const refundD4 = facturaOriginal.pagos.reduce(
-        (acc, p) => addD4(acc, toD4(p.Monto)),
-        0n
-      );
+      // Total a devolver de la GAVETA: solo los pagos hechos en efectivo
+      // (los digitales se reembolsan por banco, nunca salen del cajón).
+      const refundD4 = facturaOriginal.pagos
+        .filter((p) => esEfectivo(p.Metodo_Pago))
+        .reduce((acc, p) => addD4(acc, toD4(p.Monto)), 0n);
       if (refundD4 > toD4(caja.Saldo_Actual)) {
+        // Refund en efectivo pero saldo insuficiente (CERO DÉFICIT).
         throw new ReversionSaldoError(
-          `Saldo insuficiente en caja: la devolución de ${aDecimal(refundD4)} USD excede el saldo disponible de ${Number(caja.Saldo_Actual).toFixed(2)} USD. ` +
+          `Saldo insuficiente en caja: la devolución en efectivo de ${aDecimal(refundD4)} USD excede el saldo disponible de ${Number(caja.Saldo_Actual).toFixed(2)} USD. ` +
           `Solicite un Ingreso de Caja al supervisor antes de procesar la devolución.`
         );
       }
@@ -440,7 +498,29 @@ export const reversarVenta = async (req: AuthRequest, res: Response) => {
           Estatus: 'Emitida',
           Tipo_Documento: 'NOTA_CREDITO',
           Factura_Afectada_ID: facturaOriginal.Factura_ID,
-          Autorizado_Por_ID: autorizadoPorId
+          Autorizado_Por_ID: autorizadoPorId,
+          // Espejo fiscal: la NC replica ítems (cantidades y subtotales en
+          // negativo) y los pagos devueltos — sin esto, el ticket de la NC
+          // salía "vacío" y el libro ventas no cuadraba contra la factura.
+          detalle_facturas: {
+            create: facturaOriginal.detalle_facturas.map((d) => ({
+              Producto_ID: d.Producto_ID,
+              Variante_ID: d.Variante_ID ?? undefined,
+              Cantidad: -d.Cantidad,
+              Precio_Unitario: aDecimal(toD4(d.Precio_Unitario)),
+              Costo_Unitario_Historico: aDecimal(toD4(d.Costo_Unitario_Historico)),
+              Subtotal: aDecimal(neg(toD4(d.Subtotal)))
+            }))
+          },
+          pagos: {
+            create: facturaOriginal.pagos.map((p) => ({
+              Metodo_Pago: p.Metodo_Pago,
+              Monto: aDecimal(neg(toD4(p.Monto))),
+              Referencia: p.Referencia,
+              Es_Divisa: p.Es_Divisa,
+              Tasa_Cambio: aDecimal(toD4(p.Tasa_Cambio ?? facturaOriginal.Tasa_Cambio))
+            }))
+          }
         }
       });
 
@@ -471,14 +551,19 @@ export const reversarVenta = async (req: AuthRequest, res: Response) => {
             Costo_Promedio: aDecimal(nuevoCMP)
           }
         });
+        // Restitución matricial: la variante vendida recupera su stock.
+        if (item.Variante_ID != null) {
+          await tx.producto_variantes.update({
+            where: { Variante_ID: item.Variante_ID },
+            data: { Stock_Actual: { increment: item.Cantidad } }
+          });
+        }
       }
 
-      // E. Egresos en caja (espejo de los pagos originales) + descuento de saldo.
-      const sumaPagos = facturaOriginal.pagos.reduce(
-        (acc, p) => addD4(acc, toD4(p.Monto)),
-        0n
-      );
+      // E. Egreso en caja: ÚNICAMENTE pagos en efectivo (los digitales se
+      // reembolsan por banco: sin egreso en gaveta ni movimiento de caja).
       for (const p of facturaOriginal.pagos) {
+        if (!esEfectivo(p.Metodo_Pago)) continue;
         await tx.movimientos_caja.create({
           data: {
             Caja_ID: caja.Caja_ID,
@@ -495,13 +580,30 @@ export const reversarVenta = async (req: AuthRequest, res: Response) => {
       }
       await tx.caja.update({
         where: { Caja_ID: caja.Caja_ID },
-        data: { Saldo_Actual: { decrement: aDecimal(sumaPagos) } }
+        data: { Saldo_Actual: { decrement: aDecimal(refundD4) } }
       });
 
       return nc;
+    }, {
+      timeout: 30000,
+      maxWait: 20000
     });
 
-    return res.status(201).json({ message: 'Venta reversada correctamente', notaCredito: resultado });
+    // Hidratación idéntica post-commit para imprimir la NC con ítems y pagos.
+    const ncCompleta = await prisma.facturas.findUnique({
+      where: { Factura_ID: resultado.Factura_ID },
+      include: {
+        clientes: true,
+        usuarios: true,
+        pagos: true,
+        detalle_facturas: { include: { productos: true, producto_variantes: { include: { atributos: true } } } }
+      }
+    });
+
+    return res.status(201).json({
+      message: 'Venta reversada correctamente',
+      notaCredito: sanitizarFactura(ncCompleta)
+    });
   } catch (error: any) {
     if (error instanceof ArqueoPendienteError) {
       return res.status(error.status).json({ error: error.message, tipo: 'ARQUEO_PENDIENTE' });

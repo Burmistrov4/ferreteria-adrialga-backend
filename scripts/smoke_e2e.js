@@ -89,6 +89,16 @@ const assert = (cond, msg) => {
   })).json();
   assert(!!facRes.factura, `Factura emitida (ID ${facRes.factura?.Factura_ID})`);
   const facturaId = facRes.factura.Factura_ID;
+  // Bugfix ticket incompleto: el payload del POST debe venir hidratado
+  // (detalle + productos + pagos + cliente) para la impresión inmediata.
+  assert(Array.isArray(facRes.factura.detalle_facturas) && facRes.factura.detalle_facturas.length > 0,
+    `Factura hidratada con ${facRes.factura.detalle_facturas.length} ítem(s)`);
+  assert(!!facRes.factura.detalle_facturas[0].productos?.Nombre,
+    `Ítem con nombre de producto: ${facRes.factura.detalle_facturas[0].productos?.Nombre}`);
+  assert(!!facRes.factura.clientes?.Razon_Social && !!facRes.factura.usuarios?.Nombre,
+    `Factura con cliente (${facRes.factura.clientes?.Razon_Social}) y cajero`);
+  assert(Array.isArray(facRes.factura.pagos) && facRes.factura.pagos.length > 0,
+    'Pagos incluidos en el payload de la factura');
 
   const detalle = await prisma.detalle_facturas.findFirst({ where: { Factura_ID: facturaId } });
   assert(Math.abs(Number(detalle.Costo_Unitario_Historico) - cmpAntesVenta) < 0.0001,
@@ -104,6 +114,35 @@ const assert = (cond, msg) => {
   assert(movs.length > 0, `Movimiento(s) INGRESO en caja por factura (= ${movs.length})`);
   const sumaIngreso = movs.reduce((a, m) => a + Number(m.Monto_USD), 0);
   assert(Math.abs(sumaIngreso - 17.4) < 0.01, `INGRESO en caja = 17.40 USD (= ${sumaIngreso.toFixed(2)})`);
+
+  // ── 4b. Separación de canales (pago digital NO contamina la gaveta) ──
+  // Venta 100% por Pago Móvil: el movimiento de caja se audita, pero
+  // Saldo_Actual (efectivo físico) NO puede moverse ni un centavo.
+  const saldoAntesDigital = Number((await prisma.caja.findFirst({ where: { Activa: true } })).Saldo_Actual);
+  const facDigital = await (await fetch(`${BASE}/facturas`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({
+      Cliente_ID: cliente.Cliente_ID,
+      Detalles: [{ Producto_ID: prodId, Cantidad: 1, Precio_Unitario: 5 }],
+      Tasa_Cambio: tasa,
+      Detalles_Pago: { pagoMovil: 5.8 } // 5.00 USD base + 0.80 IVA 16%
+    })
+  })).json();
+  assert(!!facDigital.factura, `Factura digital emitida (ID ${facDigital.factura?.Factura_ID})`);
+  const saldoDespuesDigital = Number((await prisma.caja.findFirst({ where: { Activa: true } })).Saldo_Actual);
+  assert(Math.abs(saldoDespuesDigital - saldoAntesDigital) < 0.000001,
+    `Pago Móvil NO altera caja física (${saldoAntesDigital} → ${saldoDespuesDigital})`);
+  // La auditoría sí debe dejar huella del pago en movimientos_caja:
+  const movsDigital = await prisma.movimientos_caja.findMany({
+    where: { Origen_Tipo: 'factura', Origen_ID: facDigital.factura.Factura_ID }
+  });
+  assert(movsDigital.length === 1,
+    `Movimiento de auditoría del pago digital registrado (= ${movsDigital.length})`);
+  // Limpieza: reversar la factura digital (NC sin egreso en efectivo) para
+  // no contaminar el resto de la suite de pruebas.
+  await fetch(`${BASE}/facturas/${facDigital.factura.Factura_ID}/reversar`, {
+    method: 'POST', headers: auth, body: JSON.stringify({})
+  });
 
   // ── 5. Exportación CSV del libro diario ──
   const csvRes = await fetch(`${BASE}/dashboard/exportar?periodo=mes&formato=csv`, { headers: auth });
@@ -149,6 +188,67 @@ const assert = (cond, msg) => {
     })
   });
   assert(badStock.status === 400, `Stock insuficiente → HTTP ${badStock.status} controlado`);
+
+  // ── 6b. Venta Matricial: Variante_ID descuenta stock de la variante ──
+  const prodMatriz = await (await fetch(`${BASE}/productos`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({
+      Nombre: 'Lámpara Matriz E2E', Precio_Venta: 12.0, Stock_Actual: 4,
+      Stock_Minimo: 1, Costo_Promedio: 8, Categoria_ID: catId
+    })
+  })).json();
+  const prodMatrizId = (prodMatriz.producto ?? prodMatriz).Producto_ID;
+  const bulkV = await fetch(`${BASE}/productos/${prodMatrizId}/variantes/bulk`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({
+      variantes: [
+        { sku: `MAT-${prodMatrizId}-GRIS`, atributos: { Color: 'Gris' }, stock: 3, costo: 8, precio: 12 },
+        { sku: `MAT-${prodMatrizId}-AZUL`, atributos: { Color: 'Azul' }, stock: 1, costo: 8, precio: 12 }
+      ]
+    })
+  });
+  assert(bulkV.status === 201, `Variantes de matriz creadas (${bulkV.status})`);
+  const matrizInfo = await (await fetch(`${BASE}/productos/${prodMatrizId}/variantes`, { headers: auth })).json();
+  const gris = matrizInfo.matriz.find((v) => v.sku === `MAT-${prodMatrizId}-GRIS`);
+  assert(!!gris, 'Variante Gris visible en el endpoint matriz');
+
+  const facVariante = await (await fetch(`${BASE}/facturas`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({
+      Cliente_ID: cliente.Cliente_ID, Tasa_Cambio: tasa,
+      Detalles: [{ Producto_ID: prodMatrizId, Variante_ID: gris.varianteId, Cantidad: 2, Precio_Unitario: 12 }],
+      Detalles_Pago: {}
+    })
+  })).json();
+  assert(facVariante.factura, `Venta con Variante_ID (Factura ${facVariante.factura?.Factura_ID})`);
+  const grisPost = (await (await fetch(`${BASE}/productos/${prodMatrizId}/variantes`, { headers: auth })).json())
+    .matriz.find((v) => v.sku === `MAT-${prodMatrizId}-GRIS`);
+  assert(grisPost.stock === 1, `Stock variante Gris: 3 → 1 tras la venta (= ${grisPost.stock})`);
+  const padrePost = await prisma.productos.findUnique({ where: { Producto_ID: prodMatrizId } });
+  assert(padrePost.Stock_Actual === 2, `Stock padre: 4 → 2 (= ${padrePost.Stock_Actual})`);
+  const detV = facVariante.factura.detalle_facturas?.[0];
+  assert(detV?.producto_variantes?.SKU_Variante === `MAT-${prodMatrizId}-GRIS`,
+    `Ticket hidratado con SKU de variante (${detV?.producto_variantes?.SKU_Variante})`);
+  assert(detV?.Costo_Unitario_Historico === 8 || Math.abs(detV?.Costo_Unitario_Historico - 8) < 0.0001,
+    'CMP histórico usa el costo real de la variante (= 8)');
+  // Reversa matricial: restituye ambos niveles
+  await fetch(`${BASE}/facturas/${facVariante.factura.Factura_ID}/reversar`, {
+    method: 'POST', headers: auth, body: JSON.stringify({})
+  });
+  const grisRev = (await (await fetch(`${BASE}/productos/${prodMatrizId}/variantes`, { headers: auth })).json())
+    .matriz.find((v) => v.sku === `MAT-${prodMatrizId}-GRIS`);
+  assert(grisRev.stock === 3, `Reversa restituye variante a 3 (= ${grisRev.stock})`);
+  await fetch(`${BASE}/productos/${prodMatrizId}`, { method: 'DELETE', headers: auth });
+
+  // Stock insuficiente a nivel variante → 400 controlado
+  const badVariante = await fetch(`${BASE}/facturas`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({
+      Cliente_ID: cliente.Cliente_ID, Tasa_Cambio: tasa,
+      Detalles: [{ Producto_ID: prodId, Cantidad: 99999, Precio_Unitario: 1 }]
+    })
+  });
+  assert(badVariante.status === 400, `Stock variante insuficiente → 400 controlado`);
 
   // Producto con CMP=0 vendido sin entrada previa
   const prod2 = await (await fetch(`${BASE}/productos`, {
@@ -207,6 +307,10 @@ const assert = (cond, msg) => {
     method: 'POST', headers: auth, body: JSON.stringify({})
   })).json();
   assert(!!revOk.notaCredito, `Reversión exitosa: Nota de Crédito ID ${revOk.notaCredito?.Factura_ID}`);
+  // NC también hidratada (para su impresión): detalle + pagos + cliente.
+  assert(Array.isArray(revOk.notaCredito.detalle_facturas) && revOk.notaCredito.detalle_facturas.length > 0,
+    `NC hidratada con ${revOk.notaCredito.detalle_facturas.length} ítem(s)`);
+  assert(!!revOk.notaCredito.clientes?.Razon_Social, 'NC con cliente incluido');
   const ncDb = await prisma.facturas.findUnique({
     where: { Factura_ID: revOk.notaCredito.Factura_ID }
   });

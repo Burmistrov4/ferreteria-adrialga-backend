@@ -292,15 +292,18 @@ export const crearVariantesBulk = async (req: Request, res: Response) => {
     });
     if (!producto) return res.status(404).json({ message: 'Producto no encontrado' });
 
-    const resultado = await prisma.$transaction(async (tx) => {
+      const resultado = await prisma.$transaction(async (tx) => {
       const creadas: number[] = [];
       const actualizadas: number[] = [];
       for (const [i, v] of variantes.entries()) {
         const sku = String(v?.sku ?? `${producto.SKU_Codigo}-V${i + 1}`).trim();
-        const costo = Number(v?.costo ?? 0) || 0;
-        const precio = Number(v?.precio ?? 0) || 0;
-        const stock = Number(v?.stock ?? 0) || 0;
         const atributos = (v?.atributos ?? {}) as Record<string, string>;
+
+        // Preservación tolerante: null/undefined dejan intacto el valor
+        // guardado previamente (para regenerar sin borrar datos actuales).
+        const costo = v?.costo == null ? undefined : Number(v.costo);
+        const precio = v?.precio == null ? undefined : Number(v.precio);
+        const stock = v?.stock == null ? undefined : Number(v.stock);
 
         const existente = await tx.producto_variantes.findUnique({
           where: { SKU_Variante: sku },
@@ -308,8 +311,19 @@ export const crearVariantesBulk = async (req: Request, res: Response) => {
         });
         const fila = await tx.producto_variantes.upsert({
           where: { SKU_Variante: sku },
-          create: { Producto_ID: productoId, SKU_Variante: sku, Costo_Unitario: costo, Precio_Venta: precio, Stock_Actual: stock },
-          update: { Costo_Unitario: costo, Precio_Venta: precio, Stock_Actual: stock },
+          create: {
+            Producto_ID: productoId,
+            SKU_Variante: sku,
+            Costo_Unitario: costo ?? 0,
+            Precio_Venta: precio ?? 0,
+            Stock_Actual: stock ?? 0,
+          },
+          update: {
+            ...(costo !== undefined ? { Costo_Unitario: costo } : {}),
+            ...(precio !== undefined ? { Precio_Venta: precio } : {}),
+            ...(stock !== undefined ? { Stock_Actual: stock } : {}),
+            Activo: true,
+          },
         });
         // Sincronizar atributos: borra los anteriores y reinserta los nuevos
         // (volumen bajo por variante, simple y consistente).
@@ -328,7 +342,7 @@ export const crearVariantesBulk = async (req: Request, res: Response) => {
         (existente == null ? creadas : actualizadas).push(fila.Variante_ID);
       }
       return { creadas: creadas.length, actualizadas: actualizadas.length };
-    });
+    }, { timeout: 30000, maxWait: 20000 });
 
     res.status(201).json({ ok: true, ...resultado });
   } catch (error: any) {
@@ -378,6 +392,48 @@ export const actualizarVariante = async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error al actualizar variante:', error);
     res.status(500).json({ message: 'Error al actualizar la variante' });
+  }
+};
+
+/**
+ * DELETE /api/variantes/:id — SOFT DELETE (Activo=false).
+ * Una variante con historial de ventas NUNCA se borra físicamente según la
+ * regla fija de la trazabilidad fiscal (ejemplo: eliminar rompe el CSV y
+ * los detalles de facturas pasadas). Se marca inactiva y desaparece del
+ * GET de la matriz, conservando el SKU en el historial.
+ */
+export const eliminarVariante = async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: 'ID de variante inválido' });
+    }
+    const variante = await prisma.producto_variantes.findUnique({
+      where: { Variante_ID: id },
+    });
+    if (!variante) {
+      return res.status(404).json({ message: 'Variante no encontrada' });
+    }
+    // Integridad: si tiene ventas históricas se preserva solo como inactiva;
+    // la relación con detalle_facturas impide el borrado físico sin cascada.
+    const vendida = await prisma.detalle_facturas.findFirst({
+      where: { Variante_ID: id },
+      select: { Detalle_ID: true },
+    });
+    await prisma.producto_variantes.update({
+      where: { Variante_ID: id },
+      data: { Activo: false },
+    });
+    res.json({
+      ok: true,
+      eliminacionFisica: vendida == null,
+      message: vendida == null
+        ? 'Variante desactivada (topito a eliminar regenerando con el mismo SKU)'
+        : 'Variante archivada (tiene historial de ventas)'
+    });
+  } catch (error) {
+    console.error('Error al eliminar variante:', error);
+    res.status(500).json({ message: 'Error al eliminar la variante' });
   }
 };
 

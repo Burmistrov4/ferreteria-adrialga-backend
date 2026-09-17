@@ -34,6 +34,17 @@ export class ArqueoPendienteError extends Error {
 }
 
 /**
+ * Discriminador de canal: TRUE solo si el método de pago representa dinero
+ * físico que entra/sale de la gaveta (Efectivo USD o Efectivo VES).
+ * Los cobros digitales/bancarios (Pago Móvil, Punto de Venta, Zelle, etc.)
+ * van al banco: se registran en movimientos_caja para auditoría, pero NO
+ * alteran Saldo_Actual (el arqueo cuenta solo papel moneda).
+ */
+export function esEfectivo(metodo?: string | null): boolean {
+  return (metodo ?? '').toLowerCase().includes('efectivo');
+}
+
+/**
  * Fecha (jornada) actual truncada a medianoche UTC.
  */
 function inicioJornadaActual(): Date {
