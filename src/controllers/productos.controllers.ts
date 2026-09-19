@@ -46,7 +46,10 @@ function resolverPrecioYMargen(opts: {
 
 export const getProductos = async (_req: Request, res: Response) => {
   try {
+    // Solo productos activos: un ítem desactivado (soft-delete) no puede
+    // ser vendido de nuevo desde ninguna terminal POS o compra.
     const productos = await prisma.productos.findMany({
+      where: { Activo: true },
       include: { categorias: true },
       orderBy: { Producto_ID: 'desc' }
     });
