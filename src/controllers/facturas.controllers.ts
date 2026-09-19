@@ -314,18 +314,35 @@ export const createFactura = async (req: AuthRequest, res: Response) => {
         }
       });
 
-      // 4. Descontar el stock de los productos vendidos (y de la variante
-      //    específica cuando la venta es matricial: ambos bajan a la par).
+      // 4. Descuento de stock con operación ATÓMICA (anti-carrera real):
+      // `updateMany` evalúa y decrementa en la misma stmt de MySQL. Si el
+      // stock ya no alcanza (carrera entre cajeros), `count: 0` → rollback.
       for (const item of detalles) {
-        await tx.productos.update({
-          where: { Producto_ID: Number(item.Producto_ID) },
-          data: { Stock_Actual: { decrement: Number(item.Cantidad) } }
+        const touched = await tx.productos.updateMany({
+          where: {
+            Producto_ID: Number(item.Producto_ID),
+            Stock_Actual: { gte: Number(item.Cantidad) },
+          },
+          data: { Stock_Actual: { decrement: Number(item.Cantidad) } },
         });
+        if (touched.count !== 1) {
+          throw new Error(
+            `Stock insuficiente o producto inexistente para el ID ${item.Producto_ID}`
+          );
+        }
         if (item.Variante_ID != null) {
-          await tx.producto_variantes.update({
-            where: { Variante_ID: Number(item.Variante_ID) },
-            data: { Stock_Actual: { decrement: Number(item.Cantidad) } }
+          const touchedV = await tx.producto_variantes.updateMany({
+            where: {
+              Variante_ID: Number(item.Variante_ID),
+              Stock_Actual: { gte: Number(item.Cantidad) },
+            },
+            data: { Stock_Actual: { decrement: Number(item.Cantidad) } },
           });
+          if (touchedV.count !== 1) {
+            throw new Error(
+              `Stock insuficiente o variante inexistente (ID ${item.Variante_ID})`
+            );
+          }
         }
       }
 

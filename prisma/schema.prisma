@@ -297,6 +297,9 @@ model configuracion_tienda {
   Telefono    String @db.VarChar(25) @default("")
   /// Línea legal al pie del ticket/PDF (devoluciones, web, leyenda).
   Mensaje_Pie String @default("") @db.VarChar(255)
+  /// Margen por defecto (%): punto de entrada de la cascada
+  /// (Categoría > Tienda > 0). Se expone como margenDefecto en la API.
+  Margen_Defecto Decimal @default(0.0000) @db.Decimal(18, 6)
 
   @@map("configuracion_tienda")
 }

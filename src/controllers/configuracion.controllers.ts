@@ -12,6 +12,7 @@ const FALLBACK = {
   direccion: 'Dirección no configurada',
   telefono: '0000-0000000',
   mensajePie: 'Gracias por su compra',
+  margenDefecto: 0,
 };
 
 export const getConfiguracion = async (_req: Request, res: Response) => {
@@ -24,6 +25,7 @@ export const getConfiguracion = async (_req: Request, res: Response) => {
       direccion: config.Direccion,
       telefono: config.Telefono,
       mensajePie: config.Mensaje_Pie,
+      margenDefecto: Number(config.Margen_Defecto),
     });
   } catch (error) {
     console.error('Error al obtener configuración:', error);
@@ -34,11 +36,18 @@ export const getConfiguracion = async (_req: Request, res: Response) => {
 
 export const updateConfiguracion = async (req: Request, res: Response) => {
   try {
-    const { nombre, rif, direccion, telefono, mensajePie } = req.body ?? {};
+    const { nombre, rif, direccion, telefono, mensajePie, margenDefecto } =
+      req.body ?? {};
     if (!nombre || !rif || !direccion) {
       return res.status(400).json({
         message: 'nombre, rif y direccion son obligatorios',
       });
+    }
+    const margenNum = Number(margenDefecto ?? 0);
+    if (!Number.isFinite(margenNum) || margenNum < 0 || margenNum > 1000) {
+      return res
+        .status(400)
+        .json({ message: 'Margen por defecto debe estar entre 0 y 1000%' });
     }
     const actual = await prisma.configuracion_tienda.findFirst();
     const data = {
@@ -47,6 +56,7 @@ export const updateConfiguracion = async (req: Request, res: Response) => {
       Direccion: String(direccion).trim(),
       Telefono: String(telefono ?? '').trim(),
       Mensaje_Pie: String(mensajePie ?? '').trim(),
+      Margen_Defecto: margenNum,
     };
     const guardada = actual
       ? await prisma.configuracion_tienda.update({
@@ -60,6 +70,7 @@ export const updateConfiguracion = async (req: Request, res: Response) => {
       direccion: guardada.Direccion,
       telefono: guardada.Telefono,
       mensajePie: guardada.Mensaje_Pie,
+      margenDefecto: Number(guardada.Margen_Defecto),
     });
   } catch (error) {
     console.error('Error al actualizar configuración:', error);
