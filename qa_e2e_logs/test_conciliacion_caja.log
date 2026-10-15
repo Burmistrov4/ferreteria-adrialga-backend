@@ -1,0 +1,16 @@
+PASS · getHistoricoArqueos 200 · status=200
+PASS · T1 encontrado · turno=85
+PASS · T1 · ingresos efectivo = 50 (excluye apertura y digitales) · ingresos=50
+PASS · T1 · egresos operativos efectivo = 20 · egresos=20
+PASS · T1 · saldoEsperado = 130 (100+50-20) · esperado=130
+PASS · T1 · saldoEntregado = 130 · entregado=130
+PASS · T1 · diferencia = 0 · dif=0
+PASS · T1 · estadoArqueo = MATCH · estado=MATCH
+PASS · T2 encontrado · turno=86
+PASS · T2 · saldoEsperado = 100 · esperado=100
+PASS · T2 · saldoEntregado = 90 · entregado=90
+PASS · T2 · diferencia = 10 (faltante) · dif=10
+PASS · T2 · estadoArqueo = DEFICIT · estado=DEFICIT
+
+== RESUMEN T6 (conciliación caja) ==
+TODO PASS · conciliación multi-canal verificada (digital excluido, apertura excluida, MATCH/DEFICIT)

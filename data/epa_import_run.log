@@ -1,0 +1,8 @@
+
+> adrialga-backend@1.0.0 importar:epa
+> ts-node --transpile-only scripts/importar_epa.ts
+
+Leyendo 7211 registros de 19 archivo(s) EPA
+Tasa BCV activa: 859.0629
+
+== IMPORTACIÓN COMPLETA == creados=6941 actualizados=270

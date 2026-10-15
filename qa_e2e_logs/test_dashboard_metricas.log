@@ -1,0 +1,20 @@
+QA destino: host=localhost:3306 base=adrialga_qa
+PASS · getSerieFinanciera 200 · status=200
+PASS · ventas.montoTotal excluye NC (>=300) · montoTotal=300
+PASS · ventas.cantidadFacturas excluye NC (>=2) · cantidad=2
+PASS · ventas.ticketPromedio coherente · ticket=150
+PASS · ventas.montoTotalBs refleja aporte fixtures · montoTotalBs=30000
+PASS · cajero presente en ranking · monto=300
+PASS · ranking.monto excluye NC = 300 · monto=300
+PASS · ranking.facturas excluye NC = 2 · facturas=2
+PASS · ranking.monto es USD (=300) · monto=300
+PASS · ranking.montoBs = monto × tasa (30000) · montoBs=30000
+PASS · ranking.ticketPromedio = 150 · ticket=150
+PASS · ranking.ticketPromedioBs = 15000 · ticketBs=15000
+PASS · getDashboardMetrics 200 · status=200
+PASS · global.montoTotalVentas excluye NC (>=300) · monto=300
+PASS · global.totalFacturas excluye NC (>=2) · total=2
+PASS · global.montoTotalVentasBs refleja aporte fixtures · bs=30000
+
+== RESUMEN ADR-T010 (A-018/A-019) ==
+TODO PASS · contrato de métricas de ventas verificado

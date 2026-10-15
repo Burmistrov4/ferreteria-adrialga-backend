@@ -1,0 +1,335 @@
+
+== [FASE1] Categoría: automotriz ==
+    [pass1] automotriz p=1: +32 (total 32)
+    [pass1] automotriz p=2: +32 (total 64)
+    [pass1] automotriz p=3: +32 (total 96)
+    [pass1] automotriz p=4: +32 (total 128)
+    [pass1] automotriz p=5: +32 (total 160)
+    [pass1] automotriz p=6: +29 (total 189)
+    [pass1] automotriz p=7: +32 (total 221)
+    [pass1] automotriz p=8: +32 (total 253)
+    [pass1] automotriz p=9: +15 (total 268)
+  fichas=268 nuevas=0 (checkpoint=268)
+  == [FASE1] automotriz: detalles=0 -> C:\Users\Loro\Desktop\Cuarto Semestre\3. Analisis de Sistemas II\Adrialga_Sistema_Renovado\adrialga-backend\data\epa\automotriz.json
+
+== [FASE1] Categoría: banos ==
+    [pass1] banos p=1: +32 (total 32)
+    [pass1] banos p=2: +32 (total 64)
+    [pass1] banos p=3: +32 (total 96)
+    [pass1] banos p=4: +32 (total 128)
+    [pass1] banos p=5: +32 (total 160)
+    [pass1] banos p=6: +32 (total 192)
+    [pass1] banos p=7: +32 (total 224)
+    [pass1] banos p=8: +31 (total 255)
+    [pass1] banos p=9: +32 (total 287)
+    [pass1] banos p=10: +32 (total 319)
+    [pass1] banos p=11: +32 (total 351)
+    [pass1] banos p=12: +32 (total 383)
+    [pass1] banos p=13: +32 (total 415)
+    [pass1] banos p=14: +32 (total 447)
+    [pass1] banos p=15: +25 (total 472)
+  fichas=472 nuevas=218 (checkpoint=254)
+  == [FASE1] banos: detalles=218 -> C:\Users\Loro\Desktop\Cuarto Semestre\3. Analisis de Sistemas II\Adrialga_Sistema_Renovado\adrialga-backend\data\epa\banos.json
+
+== [FASE1] Categoría: bodegon ==
+    [pass1] bodegon p=1: +32 (total 32)
+    [pass1] bodegon p=2: +32 (total 64)
+    [pass1] bodegon p=3: +32 (total 96)
+    [pass1] bodegon p=4: +32 (total 128)
+    [pass1] bodegon p=5: +32 (total 160)
+    [pass1] bodegon p=6: +32 (total 192)
+    [pass1] bodegon p=7: +9 (total 201)
+  fichas=201 nuevas=201 (checkpoint=0)
+  == [FASE1] bodegon: detalles=201 -> C:\Users\Loro\Desktop\Cuarto Semestre\3. Analisis de Sistemas II\Adrialga_Sistema_Renovado\adrialga-backend\data\epa\bodegon.json
+
+== [FASE1] Categoría: cocinas ==
+    [pass1] cocinas p=1: +32 (total 32)
+    [pass1] cocinas p=2: +32 (total 64)
+    [pass1] cocinas p=3: +32 (total 96)
+    [pass1] cocinas p=4: +32 (total 128)
+    [pass1] cocinas p=5: +32 (total 160)
+    [pass1] cocinas p=6: +32 (total 192)
+    [pass1] cocinas p=7: +17 (total 209)
+  fichas=209 nuevas=209 (checkpoint=0)
+  == [FASE1] cocinas: detalles=209 -> C:\Users\Loro\Desktop\Cuarto Semestre\3. Analisis de Sistemas II\Adrialga_Sistema_Renovado\adrialga-backend\data\epa\cocinas.json
+
+== [FASE1] Categoría: construccion ==
+    [pass1] construccion p=1: +32 (total 32)
+    [pass1] construccion p=2: +32 (total 64)
+    [pass1] construccion p=3: +32 (total 96)
+    [pass1] construccion p=4: +32 (total 128)
+    [pass1] construccion p=5: +32 (total 160)
+    [pass1] construccion p=6: +32 (total 192)
+    [pass1] construccion p=7: +32 (total 224)
+    [pass1] construccion p=8: +32 (total 256)
+    [pass1] construccion p=9: +26 (total 282)
+  fichas=282 nuevas=282 (checkpoint=0)
+  == [FASE1] construccion: detalles=282 -> C:\Users\Loro\Desktop\Cuarto Semestre\3. Analisis de Sistemas II\Adrialga_Sistema_Renovado\adrialga-backend\data\epa\construccion.json
+
+== [FASE1] Categoría: decoracion ==
+    [pass1] decoracion p=1: +32 (total 32)
+    [pass1] decoracion p=2: +32 (total 64)
+    [pass1] decoracion p=3: +32 (total 96)
+    [pass1] decoracion p=4: +32 (total 128)
+    [pass1] decoracion p=5: +32 (total 160)
+    [pass1] decoracion p=6: +32 (total 192)
+    [pass1] decoracion p=7: +32 (total 224)
+    [pass1] decoracion p=8: +28 (total 252)
+    [pass1] decoracion p=9: +32 (total 284)
+    [pass1] decoracion p=10: +32 (total 316)
+    [pass1] decoracion p=11: +32 (total 348)
+    [pass1] decoracion p=12: +32 (total 380)
+    [pass1] decoracion p=13: +32 (total 412)
+    [pass1] decoracion p=14: +32 (total 444)
+    [pass1] decoracion p=15: +32 (total 476)
+    [pass1] decoracion p=16: +32 (total 508)
+    [pass1] decoracion p=17: +2 (total 510)
+  fichas=510 nuevas=510 (checkpoint=0)
+  == [FASE1] decoracion: detalles=510 -> C:\Users\Loro\Desktop\Cuarto Semestre\3. Analisis de Sistemas II\Adrialga_Sistema_Renovado\adrialga-backend\data\epa\decoracion.json
+
+== [FASE1] Categoría: electricidad ==
+    [pass1] electricidad p=1: +32 (total 32)
+    [pass1] electricidad p=2: +32 (total 64)
+    [pass1] electricidad p=3: +32 (total 96)
+    [pass1] electricidad p=4: +32 (total 128)
+    [pass1] electricidad p=5: +32 (total 160)
+    [pass1] electricidad p=6: +32 (total 192)
+    [pass1] electricidad p=7: +32 (total 224)
+    [pass1] electricidad p=8: +32 (total 256)
+    [pass1] electricidad p=9: +32 (total 288)
+    [pass1] electricidad p=10: +32 (total 320)
+    [pass1] electricidad p=11: +32 (total 352)
+    [pass1] electricidad p=12: +32 (total 384)
+    [pass1] electricidad p=13: +32 (total 416)
+    [pass1] electricidad p=14: +32 (total 448)
+    [pass1] electricidad p=15: +32 (total 480)
+    [pass1] electricidad p=16: +32 (total 512)
+    [pass1] electricidad p=17: +32 (total 544)
+    [pass1] electricidad p=18: +32 (total 576)
+    [pass1] electricidad p=19: +32 (total 608)
+    [pass1] electricidad p=20: +32 (total 640)
+    [pass1] electricidad p=21: +20 (total 660)
+  fichas=660 nuevas=660 (checkpoint=0)
+  == [FASE1] electricidad: detalles=660 -> C:\Users\Loro\Desktop\Cuarto Semestre\3. Analisis de Sistemas II\Adrialga_Sistema_Renovado\adrialga-backend\data\epa\electricidad.json
+
+== [FASE1] Categoría: electrodomesticos ==
+    [pass1] electrodomesticos p=1: +32 (total 32)
+    [pass1] electrodomesticos p=2: +1 (total 33)
+  fichas=33 nuevas=33 (checkpoint=0)
+  == [FASE1] electrodomesticos: detalles=33 -> C:\Users\Loro\Desktop\Cuarto Semestre\3. Analisis de Sistemas II\Adrialga_Sistema_Renovado\adrialga-backend\data\epa\electrodomesticos.json
+
+== [FASE1] Categoría: exteriores ==
+    [pass1] exteriores p=1: +32 (total 32)
+    [pass1] exteriores p=2: +32 (total 64)
+    [pass1] exteriores p=3: +32 (total 96)
+    [pass1] exteriores p=4: +32 (total 128)
+    [pass1] exteriores p=5: +32 (total 160)
+    [pass1] exteriores p=6: +32 (total 192)
+    [pass1] exteriores p=7: +32 (total 224)
+    [pass1] exteriores p=8: +32 (total 256)
+    [pass1] exteriores p=9: +32 (total 288)
+    [pass1] exteriores p=10: +32 (total 320)
+    [pass1] exteriores p=11: +32 (total 352)
+    [pass1] exteriores p=12: +32 (total 384)
+    [pass1] exteriores p=13: +32 (total 416)
+    [pass1] exteriores p=14: +32 (total 448)
+    [pass1] exteriores p=15: +32 (total 480)
+    [pass1] exteriores p=16: +12 (total 492)
+  fichas=492 nuevas=492 (checkpoint=0)
+  == [FASE1] exteriores: detalles=492 -> C:\Users\Loro\Desktop\Cuarto Semestre\3. Analisis de Sistemas II\Adrialga_Sistema_Renovado\adrialga-backend\data\epa\exteriores.json
+
+== [FASE1] Categoría: ferreteria-y-cerrajeria ==
+    [pass1] ferreteria-y-cerrajeria p=1: +32 (total 32)
+    [pass1] ferreteria-y-cerrajeria p=2: +32 (total 64)
+    [pass1] ferreteria-y-cerrajeria p=3: +32 (total 96)
+    [pass1] ferreteria-y-cerrajeria p=4: +32 (total 128)
+    [pass1] ferreteria-y-cerrajeria p=5: +32 (total 160)
+    [pass1] ferreteria-y-cerrajeria p=6: +32 (total 192)
+    [pass1] ferreteria-y-cerrajeria p=7: +32 (total 224)
+    [pass1] ferreteria-y-cerrajeria p=8: +32 (total 256)
+    [pass1] ferreteria-y-cerrajeria p=9: +32 (total 288)
+    [pass1] ferreteria-y-cerrajeria p=10: +32 (total 320)
+    [pass1] ferreteria-y-cerrajeria p=11: +32 (total 352)
+    [pass1] ferreteria-y-cerrajeria p=12: +32 (total 384)
+    [pass1] ferreteria-y-cerrajeria p=13: +32 (total 416)
+    [pass1] ferreteria-y-cerrajeria p=14: +32 (total 448)
+    [pass1] ferreteria-y-cerrajeria p=15: +32 (total 480)
+    [pass1] ferreteria-y-cerrajeria p=16: +32 (total 512)
+    [pass1] ferreteria-y-cerrajeria p=17: +32 (total 544)
+    [pass1] ferreteria-y-cerrajeria p=18: +32 (total 576)
+    [pass1] ferreteria-y-cerrajeria p=19: +32 (total 608)
+    [pass1] ferreteria-y-cerrajeria p=20: +26 (total 634)
+  fichas=634 nuevas=634 (checkpoint=0)
+  == [FASE1] ferreteria-y-cerrajeria: detalles=634 -> C:\Users\Loro\Desktop\Cuarto Semestre\3. Analisis de Sistemas II\Adrialga_Sistema_Renovado\adrialga-backend\data\epa\ferreteria-y-cerrajeria.json
+
+== [FASE1] Categoría: herramientas ==
+    [pass1] herramientas p=1: +32 (total 32)
+    [pass1] herramientas p=2: +32 (total 64)
+    [pass1] herramientas p=3: +32 (total 96)
+    [pass1] herramientas p=4: +32 (total 128)
+    [pass1] herramientas p=5: +32 (total 160)
+    [pass1] herramientas p=6: +32 (total 192)
+    [pass1] herramientas p=7: +32 (total 224)
+    [pass1] herramientas p=8: +32 (total 256)
+    [pass1] herramientas p=9: +32 (total 288)
+    [pass1] herramientas p=10: +32 (total 320)
+    [pass1] herramientas p=11: +32 (total 352)
+    [pass1] herramientas p=12: +32 (total 384)
+    [pass1] herramientas p=13: +32 (total 416)
+    [pass1] herramientas p=14: +32 (total 448)
+    [pass1] herramientas p=15: +32 (total 480)
+    [pass1] herramientas p=16: +32 (total 512)
+    [pass1] herramientas p=17: +32 (total 544)
+    [pass1] herramientas p=18: +32 (total 576)
+    [pass1] herramientas p=19: +32 (total 608)
+    [pass1] herramientas p=20: +32 (total 640)
+    [pass1] herramientas p=21: +32 (total 672)
+    [pass1] herramientas p=22: +7 (total 679)
+  fichas=679 nuevas=679 (checkpoint=0)
+  == [FASE1] herramientas: detalles=679 -> C:\Users\Loro\Desktop\Cuarto Semestre\3. Analisis de Sistemas II\Adrialga_Sistema_Renovado\adrialga-backend\data\epa\herramientas.json
+
+== [FASE1] Categoría: lamparas ==
+    [pass1] lamparas p=1: +32 (total 32)
+    [pass1] lamparas p=2: +32 (total 64)
+    [pass1] lamparas p=3: +32 (total 96)
+    [pass1] lamparas p=4: +32 (total 128)
+    [pass1] lamparas p=5: +32 (total 160)
+    [pass1] lamparas p=6: +32 (total 192)
+    [pass1] lamparas p=7: +32 (total 224)
+    [pass1] lamparas p=8: +32 (total 256)
+    [pass1] lamparas p=9: +32 (total 288)
+    [pass1] lamparas p=10: +32 (total 320)
+    [pass1] lamparas p=11: +32 (total 352)
+    [pass1] lamparas p=12: +32 (total 384)
+    [pass1] lamparas p=13: +32 (total 416)
+    [pass1] lamparas p=14: +32 (total 448)
+    [pass1] lamparas p=15: +32 (total 480)
+    [pass1] lamparas p=16: +32 (total 512)
+    [pass1] lamparas p=17: +32 (total 544)
+    [pass1] lamparas p=18: +32 (total 576)
+    [pass1] lamparas p=19: +32 (total 608)
+    [pass1] lamparas p=20: +32 (total 640)
+    [pass1] lamparas p=21: +22 (total 662)
+  fichas=662 nuevas=662 (checkpoint=0)
+  == [FASE1] lamparas: detalles=662 -> C:\Users\Loro\Desktop\Cuarto Semestre\3. Analisis de Sistemas II\Adrialga_Sistema_Renovado\adrialga-backend\data\epa\lamparas.json
+
+== [FASE1] Categoría: limpieza ==
+    [pass1] limpieza p=1: +32 (total 32)
+    [pass1] limpieza p=2: +32 (total 64)
+    [pass1] limpieza p=3: +32 (total 96)
+    [pass1] limpieza p=4: +32 (total 128)
+    [pass1] limpieza p=5: +32 (total 160)
+    [pass1] limpieza p=6: +32 (total 192)
+    [pass1] limpieza p=7: +32 (total 224)
+    [pass1] limpieza p=8: +23 (total 247)
+  fichas=247 nuevas=247 (checkpoint=0)
+  == [FASE1] limpieza: detalles=247 -> C:\Users\Loro\Desktop\Cuarto Semestre\3. Analisis de Sistemas II\Adrialga_Sistema_Renovado\adrialga-backend\data\epa\limpieza.json
+
+== [FASE1] Categoría: maderas-y-puertas ==
+    [pass1] maderas-y-puertas p=1: +32 (total 32)
+    [pass1] maderas-y-puertas p=2: +32 (total 64)
+    [pass1] maderas-y-puertas p=3: +32 (total 96)
+  fichas=96 nuevas=96 (checkpoint=0)
+  == [FASE1] maderas-y-puertas: detalles=96 -> C:\Users\Loro\Desktop\Cuarto Semestre\3. Analisis de Sistemas II\Adrialga_Sistema_Renovado\adrialga-backend\data\epa\maderas-y-puertas.json
+
+== [FASE1] Categoría: muebles-y-organizacion ==
+    [pass1] muebles-y-organizacion p=1: +32 (total 32)
+    [pass1] muebles-y-organizacion p=2: +32 (total 64)
+    [pass1] muebles-y-organizacion p=3: +32 (total 96)
+    [pass1] muebles-y-organizacion p=4: +32 (total 128)
+    [pass1] muebles-y-organizacion p=5: +32 (total 160)
+    [pass1] muebles-y-organizacion p=6: +32 (total 192)
+    [pass1] muebles-y-organizacion p=7: +32 (total 224)
+    [pass1] muebles-y-organizacion p=8: +19 (total 243)
+  fichas=243 nuevas=243 (checkpoint=0)
+  == [FASE1] muebles-y-organizacion: detalles=243 -> C:\Users\Loro\Desktop\Cuarto Semestre\3. Analisis de Sistemas II\Adrialga_Sistema_Renovado\adrialga-backend\data\epa\muebles-y-organizacion.json
+
+== [FASE1] Categoría: pinturas ==
+    [pass1] pinturas p=1: +32 (total 32)
+    [pass1] pinturas p=2: +32 (total 64)
+    [pass1] pinturas p=3: +32 (total 96)
+    [pass1] pinturas p=4: +32 (total 128)
+    [pass1] pinturas p=5: +32 (total 160)
+    [pass1] pinturas p=6: +32 (total 192)
+    [pass1] pinturas p=7: +32 (total 224)
+    [pass1] pinturas p=8: +32 (total 256)
+    [pass1] pinturas p=9: +32 (total 288)
+    [pass1] pinturas p=10: +32 (total 320)
+    [pass1] pinturas p=11: +32 (total 352)
+    [pass1] pinturas p=12: +32 (total 384)
+    [pass1] pinturas p=13: +32 (total 416)
+    [pass1] pinturas p=14: +32 (total 448)
+    [pass1] pinturas p=15: +32 (total 480)
+    [pass1] pinturas p=16: +32 (total 512)
+    [pass1] pinturas p=17: +32 (total 544)
+    [pass1] pinturas p=18: +32 (total 576)
+    [pass1] pinturas p=19: +32 (total 608)
+    [pass1] pinturas p=20: +32 (total 640)
+    [pass1] pinturas p=21: +32 (total 672)
+    [pass1] pinturas p=22: +32 (total 704)
+    [pass1] pinturas p=23: +16 (total 720)
+  fichas=720 nuevas=720 (checkpoint=0)
+  == [FASE1] pinturas: detalles=720 -> C:\Users\Loro\Desktop\Cuarto Semestre\3. Analisis de Sistemas II\Adrialga_Sistema_Renovado\adrialga-backend\data\epa\pinturas.json
+
+== [FASE1] Categoría: pisos ==
+    [pass1] pisos p=1: +32 (total 32)
+    [pass1] pisos p=2: +32 (total 64)
+    [pass1] pisos p=3: +32 (total 96)
+    [pass1] pisos p=4: +32 (total 128)
+    [pass1] pisos p=5: +32 (total 160)
+    [pass1] pisos p=6: +32 (total 192)
+    [pass1] pisos p=7: +5 (total 197)
+  fichas=197 nuevas=197 (checkpoint=0)
+  == [FASE1] pisos: detalles=197 -> C:\Users\Loro\Desktop\Cuarto Semestre\3. Analisis de Sistemas II\Adrialga_Sistema_Renovado\adrialga-backend\data\epa\pisos.json
+
+== [FASE1] Categoría: plomeria ==
+    [pass1] plomeria p=1: +32 (total 32)
+    [pass1] plomeria p=2: +32 (total 64)
+    [pass1] plomeria p=3: +32 (total 96)
+    [pass1] plomeria p=4: +32 (total 128)
+    [pass1] plomeria p=5: +32 (total 160)
+    [pass1] plomeria p=6: +32 (total 192)
+    [pass1] plomeria p=7: +32 (total 224)
+    [pass1] plomeria p=8: +32 (total 256)
+    [pass1] plomeria p=9: +32 (total 288)
+    [pass1] plomeria p=10: +32 (total 320)
+    [pass1] plomeria p=11: +32 (total 352)
+    [pass1] plomeria p=12: +32 (total 384)
+    [pass1] plomeria p=13: +32 (total 416)
+    [pass1] plomeria p=14: +32 (total 448)
+    [pass1] plomeria p=15: +8 (total 456)
+  fichas=456 nuevas=456 (checkpoint=0)
+  == [FASE1] plomeria: detalles=456 -> C:\Users\Loro\Desktop\Cuarto Semestre\3. Analisis de Sistemas II\Adrialga_Sistema_Renovado\adrialga-backend\data\epa\plomeria.json
+
+== [FASE1] Categoría: seguridad ==
+    [pass1] seguridad p=1: +32 (total 32)
+    [pass1] seguridad p=2: +32 (total 64)
+    [pass1] seguridad p=3: +32 (total 96)
+    [pass1] seguridad p=4: +32 (total 128)
+    [pass1] seguridad p=5: +20 (total 148)
+  fichas=148 nuevas=148 (checkpoint=0)
+  == [FASE1] seguridad: detalles=148 -> C:\Users\Loro\Desktop\Cuarto Semestre\3. Analisis de Sistemas II\Adrialga_Sistema_Renovado\adrialga-backend\data\epa\seguridad.json
+
+== [FASE2] Descarga de imágenes WebP ==
+  [FASE2] automotriz.json: 270/270 imágenes ok
+  [FASE2] banos.json: 472/472 imágenes ok
+  [FASE2] bodegon.json: 201/201 imágenes ok
+  [FASE2] cocinas.json: 209/209 imágenes ok
+  [FASE2] construccion.json: 282/282 imágenes ok
+  [FASE2] decoracion.json: 432/510 imágenes ok
+  [FASE2] electricidad.json: 660/660 imágenes ok
+  [FASE2] electrodomesticos.json: 33/33 imágenes ok
+  [FASE2] exteriores.json: 408/492 imágenes ok
+  [FASE2] ferreteria-y-cerrajeria.json: 634/634 imágenes ok
+  [FASE2] herramientas.json: 679/679 imágenes ok
+  [FASE2] lamparas.json: 578/662 imágenes ok
+  [FASE2] limpieza.json: 247/247 imágenes ok
+  [FASE2] maderas-y-puertas.json: 96/96 imágenes ok
+  [FASE2] muebles-y-organizacion.json: 243/243 imágenes ok
+  [FASE2] pinturas.json: 636/720 imágenes ok
+  [FASE2] pisos.json: 197/197 imágenes ok
+  [FASE2] plomeria.json: 456/456 imágenes ok
+  [FASE2] seguridad.json: 148/148 imágenes ok
+== [FASE2] total imágenes locales = 6881 ==
+
+== FIN == 

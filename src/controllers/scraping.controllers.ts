@@ -3,6 +3,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import { prisma } from '../config/db';
 import { ScrapingService } from '../services/scraping.service';
+import { IoStore } from '../utils/socket';
 
 /**
  * GET /api/scraping/bcv
@@ -79,6 +80,13 @@ export async function sincronizarPrecios(req: AuthRequest, res: Response) {
           });
           actualizadosDb += 1;
         }
+      });
+    }
+
+    // La transacción ya terminó; avisar a los otros terminales si cambió algún costo.
+    if (actualizadosDb > 0) {
+      IoStore.emitDbUpdate('inventario', 'Costos de inventario sincronizados por scraping', {
+        actualizados: actualizadosDb,
       });
     }
 

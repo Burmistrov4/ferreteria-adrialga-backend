@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/db';
+import { responderErrorPrisma } from '../utils/errores';
+import { IoStore } from '../utils/socket';
 
 /**
  * Configuración legal de la tienda (encabezado de facturas/PDF).
@@ -64,6 +66,7 @@ export const updateConfiguracion = async (req: Request, res: Response) => {
           data,
         })
       : await prisma.configuracion_tienda.create({ data });
+    IoStore.emitDbUpdate('configuracion', 'Configuración de tienda actualizada');
     res.json({
       nombre: guardada.Nombre,
       rif: guardada.RIF,
@@ -74,6 +77,9 @@ export const updateConfiguracion = async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error('Error al actualizar configuración:', error);
-    res.status(500).json({ message: 'Error al guardar la configuración' });
+    return responderErrorPrisma(res, error, {
+      recurso: 'configuracion de tienda',
+      contexto: 'guardar la',
+    });
   }
 };

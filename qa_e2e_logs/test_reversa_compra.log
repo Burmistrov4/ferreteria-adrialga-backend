@@ -1,0 +1,23 @@
+PASS · S1 · nota creada (201) · notaId=129
+PASS · S1 · reversa devuelve 200 · status=200
+PASS · S1 · nota marcada Anulada · estatus=Anulada
+PASS · S1 · Anulada_Por = admin · anuladaPor=79
+PASS · S1 · motivo conservado
+PASS · S1 · stock producto revertido a 0 · stock=0
+PASS · S1 · CMP revertido a 0 · cpp=0
+PASS · S1 · CxP anulada · estatus=Anulada
+PASS · S1 · CxP saldo 0 · saldo=0
+PASS · S1 · idempotente → 409 YA_ANULADA · status=409 tipo=YA_ANULADA
+PASS · S2 · CAJERO → 403 · status=403 tipo=PERMISO_INSUFICIENTE
+PASS · S2 · nota sigue Procesada · estatus=Procesada
+PASS · S2 · ADMIN anula nota de prueba · status=200
+PASS · S3 · parcialmente consumido → 409 PARCIAL_CONSUMIDO · status=409 tipo=PARCIAL_CONSUMIDO
+PASS · S3 · nota NO alterada (sigue Procesada) · estatus=Procesada
+PASS · S3 · stock NO alterado (=2) · stock=2
+PASS · S4 · nota a crédito creada (201) · notaId=132
+PASS · S4 · CxP con abonos → 409 CXP_CON_PAGOS · status=409 tipo=CXP_CON_PAGOS
+PASS · S4 · nota NO alterada (sigue Procesada) · estatus=Procesada
+PASS · S4 · CxP intacta tras rechazo (saldo=40, pagado=10) · saldo=40 pagado=10 estatus=Pendiente
+
+== RESUMEN A-017 ==
+TODO PASS · reversa de notas de entrada verificada (caso limpio + guardianes)

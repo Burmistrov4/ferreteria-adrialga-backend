@@ -132,6 +132,34 @@ export const getResumenIVA = async (req: Request, res: Response) => {
   try {
     const { anio, mes } = periodo(req);
     const resumen = await SeniatService.resumenIVA(anio, mes);
+
+    // Exportación CSV (normativa SENIAT: ';' + BOM + CRLF), además del JSON
+    // que consume la UI. Se usa una tabla vertical Concepto | Monto (USD) para
+    // que el resumen se pueda imprimir/adjuntar sin re-tipear cifras.
+    if (req.query.formato === 'csv') {
+      const red2 = (n: number) => n.toFixed(2);
+      const cuerpo: unknown[][] = [
+        [`Período ${anio}-${String(mes).padStart(2, '0')}`, ''],
+        ['Ventas · Documentos', resumen.ventas.documentos],
+        ['Ventas · Base Exenta USD', red2(resumen.ventas.baseExentaUsd)],
+        ['Ventas · Base Imponible USD', red2(resumen.ventas.baseImponibleUsd)],
+        ['Ventas · IVA Débito USD', red2(resumen.ventas.ivaDebitoUsd)],
+        ['Ventas · IGTF USD', red2(resumen.ventas.igtfUsd)],
+        ['Ventas · Total USD', red2(resumen.ventas.totalUsd)],
+        ['Compras · Documentos', resumen.compras.documentos],
+        ['Compras · Base Imponible USD', red2(resumen.compras.baseImponibleUsd)],
+        ['Compras · IVA Crédito USD', red2(resumen.compras.ivaCreditoUsd)],
+        ['Compras · Total USD', red2(resumen.compras.totalUsd)],
+        ['IVA a Pagar (Débito − Crédito) USD', red2(resumen.ivaAPagarUsd)],
+      ];
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="resumen_iva_${anio}-${String(mes).padStart(2, '0')}.csv"`
+      );
+      return res.send(csvSemicolon(['Concepto', 'Monto_USD'], cuerpo));
+    }
+
     return res.json(resumen);
   } catch (error: any) {
     console.error('getResumenIVA:', error);

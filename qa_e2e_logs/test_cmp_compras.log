@@ -1,0 +1,21 @@
+PASS · C1 · nota 201 · status=201
+PASS · C1 · stock=10 · stock=10
+PASS · C1 · CMP=5 · cmp=5
+PASS · C1 · Costo_Ultimo=5 · ultimo=5
+PASS · C1 · Precio=7.5 (margen 50%) · precio=7.5
+PASS · C2 · nota 201 · status=201
+PASS · C2 · stock=20 · stock=20
+PASS · C2 · CMP=6 (promedio ponderado) · cmp=6
+PASS · C2 · Costo_Ultimo=7 · ultimo=7
+PASS · C2 · Precio=9 (6×1.5) · precio=9
+PASS · C3 · nota 201 · status=201
+PASS · C3 · stock=25 · stock=25
+PASS · C3 · CMP se MANTIENE en 6 (sin diluir) · cmp=6
+PASS · C3 · Costo_Ultimo se MANTIENE en 7 · ultimo=7
+PASS · C3 · detalle usa CMP vigente (6) · detCosto=6
+PASS · C4 · nota 201 · status=201
+PASS · C4 · stock=3 · stock=3
+PASS · C4 · CMP=3.3333 (redondeo D4) · cmp=3.3333
+
+== RESUMEN T4 (CMP) ==
+TODO PASS · costo promedio ponderado reconciliado (explícito, implícito, cero, D4)

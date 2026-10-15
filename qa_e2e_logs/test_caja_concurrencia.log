@@ -1,0 +1,27 @@
+== Limpieza inicial de QA (solo QA, verificado arriba) ==
+
+== S1: DOS APERTURAS CONCURRENTES (CASH-003/004) ==
+PASS · S1 una sola apertura exitosa (201) y un conflicto (409) · status=[201,409]
+PASS · S1 exactamente 1 caja activa · activas=1
+PASS · S1 exactamente 1 turno en total · total=1
+PASS · S1 un solo movimiento de apertura · aperturas=1
+
+== S2: DOS CIERRES CONCURRENTES ==
+PASS · S2 ingreso previo aceptado · status=201
+PASS · S2 un solo cierre exitoso (200) y un conflicto (409) · status=[200,409]
+PASS · S2 exactamente 1 EGRESO de cierre · cierres=1
+PASS · S2 turno quedó CERRADA con saldo 0 · estado=CERRADA saldo=0
+PASS · S2 el saldo entregado incluye fondo + ingreso (140) · saldoEntregado=140
+
+== S3: REINTENTO DE CIERRE TRAS CIERRE EXITOSO (CASH-010) ==
+PASS · S3 reintento devuelve 409 sin duplicar · status=409
+PASS · S3 sigue habiendo 1 solo EGRESO de cierre
+
+== S4: ENTREGA DE FONDO vs CIERRE CONCURRENTES ==
+PASS · S4 segundo turno abierto (201) · status=201
+PASS · S4 ingreso perdedor rechazado sin dejar movimiento (409) · ingreso=409 movimientos=0
+PASS · S4 cierre siempre exitoso · status=200
+PASS · S4 un solo EGRESO de cierre en el turno 2
+
+== RESUMEN ==
+TODO PASS · concurrencia de caja serializada correctamente

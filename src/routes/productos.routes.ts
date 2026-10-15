@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   getProductos,
+  getProductoById,
   createProducto,
   updateProducto,
   deleteProducto,
@@ -15,6 +16,7 @@ const router = Router();
 
 router.use(authenticateToken);
 router.get('/', getProductos);
+router.get('/:id', getProductoById);
 router.get('/:id/variantes', getVariantesDeProducto);
 router.post('/:id/variantes/bulk', crearVariantesBulk);
 router.patch('/variantes/:id', actualizarVariante);

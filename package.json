@@ -9,8 +9,16 @@
     "postinstall": "prisma generate",
     "start": "node dist/index.js",
     "seed": "ts-node-dev --transpile-only src/seed.ts",
+    "seed:stress": "ts-node-dev --transpile-only scripts/seed_stress.ts",
+    "verify:arqueo": "ts-node-dev --transpile-only scripts/verify_arqueo_math.ts",
+    "caja:doctor": "ts-node-dev --transpile-only scripts/caja_doctor.ts",
+    "verify:caja-concurrencia": "ts-node-dev --transpile-only --exit-child scripts/test_caja_concurrencia.ts",
+    "skus:normalizar": "ts-node-dev --transpile-only scripts/normalizar_skus.ts",
+    "importar:epa": "ts-node --transpile-only scripts/importar_epa.ts",
     "migrate:variantes": "ts-node-dev --transpile-only scripts/migrate_variantes.ts",
-    "db:deploy": "prisma migrate deploy"
+    "db:deploy": "node scripts/safe_migrate_deploy.cjs",
+    "imagenes:deploy": "node scripts/exportar_imagenes_deploy.cjs",
+    "web:deploy": "node scripts/preparar_web_deploy.cjs"
   },
   "engines": {
     "node": ">=18"
@@ -21,8 +29,10 @@
   "type": "commonjs",
   "dependencies": {
     "@prisma/client": "^6.3.0",
+    "@types/compression": "^1.8.1",
     "axios": "^1.20.0",
     "bcryptjs": "^2.4.3",
+    "compression": "^1.8.2",
     "cors": "^2.8.6",
     "decimal.js": "^10.6.0",
     "dotenv": "^16.4.5",
@@ -30,6 +40,7 @@
     "express-rate-limit": "^8.7.0",
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.2",
+    "socket.io": "^4.8.3",
     "zod": "^3.24.1"
   },
   "devDependencies": {
@@ -40,7 +51,9 @@
     "@types/helmet": "^0.0.48",
     "@types/jsonwebtoken": "^9.0.8",
     "@types/node": "^22.10.2",
+    "mysqldump": "^3.2.0",
     "prisma": "^6.3.0",
+    "socket.io-client": "^4.8.3",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.7.2"
   }

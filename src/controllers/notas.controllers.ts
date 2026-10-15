@@ -1,8 +1,29 @@
 import { Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../config/db';
 import { AuthRequest } from '../middlewares/auth.middleware';
-import { toD4, addD4, mulD4, divD4, aDecimal } from '../utils/dinero';
-import { exigirCajaAbierta } from '../utils/caja';
+import { toD4, addD4, subD4, mulD4, divD4, aDecimal } from '../utils/dinero';
+import { exigirCajaAbierta, reintentarEnDeadlock } from '../utils/caja';
+import { responderErrorPrisma } from '../utils/errores';
+import { IoStore } from '../utils/socket';
+
+interface FilaProductoCompra {
+  Producto_ID: number;
+  Stock_Actual: number;
+  Costo_Promedio: Prisma.Decimal;
+  Margen_Ganancia: Prisma.Decimal;
+  Margen_Categoria: Prisma.Decimal | null;
+  Activo: boolean;
+}
+
+interface FilaVarianteCompra {
+  Variante_ID: number;
+  Producto_ID: number;
+  Stock_Actual: number;
+  Costo_Unitario: Prisma.Decimal;
+  Margen_Ganancia: Prisma.Decimal | null;
+  Activo: boolean;
+}
 
 // ── Proveedor por defecto para compras informales/locales ───────────────────
 const PROVEEDOR_INFORMAL_RIF = 'J-000000000';
@@ -14,12 +35,21 @@ export const getNotasEntrega = async (_req: Request, res: Response) => {
       include: {
         proveedores: true,
         usuarios: { select: { Usuario_ID: true, Nombre: true } },
-        detalle_notas_entrega: { include: { productos: true } }
+        detalle_notas_entrega: {
+          include: {
+            productos: true,
+            // A-016: exponer la variante recibida en la lectura de notas.
+            producto_variantes: true,
+          },
+        }
       }
     });
     return res.json(notas);
   } catch (error) {
-    return res.status(500).json({ message: 'Error al obtener notas de entrega', error });
+    return responderErrorPrisma(res, error, {
+      recurso: 'nota de entrega',
+      contexto: 'obtener las',
+    });
   }
 };
 
@@ -41,7 +71,10 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    const resultado = await prisma.$transaction(async (tx) => {
+    const resultado = await reintentarEnDeadlock(
+      prisma,
+      { timeout: 30000, maxWait: 20000 },
+      async (tx) => {
       // ── Fallback de proveedor informal ──────────────────────────────────
       // Si no viene Proveedor_ID, se busca (o crea) el proveedor genérico
       // "PROVEEDOR GENERAL / INFORMAL" para mantener la integridad referencial.
@@ -59,38 +92,82 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
       }
 
       // ── Validación explícita de productos (fail-fast, antes de escribir) ──
-      const productosVigentes = new Map<
-        number,
-        { stock: number; costoD4: bigint; margen: number; varianteId: number | null }
-      >();
+      // Bloqueo pesimista: una compra concurrente no puede leer un stock viejo
+      // y sobrescribir el incremento de otra transacción.
+      const productoIds = Array.from(
+        new Set(detalles.map((item) => Number(item.Producto_ID))),
+      ).sort((a, b) => a - b);
+      const varianteIds = Array.from(
+        new Set(
+          detalles
+            .map((item) => item.Variante_ID)
+            .filter((id): id is number => id != null)
+            .map(Number),
+        ),
+      ).sort((a, b) => a - b);
+
+      const filasProductos = productoIds.length
+        ? await tx.$queryRaw<FilaProductoCompra[]>(Prisma.sql`
+            SELECT p.Producto_ID, p.Stock_Actual, p.Costo_Promedio,
+                   p.Margen_Ganancia, c.Margen_Sugerido AS Margen_Categoria, p.Activo
+            FROM productos p
+            LEFT JOIN categorias c ON c.Categoria_ID = p.Categoria_ID
+            WHERE p.Producto_ID IN (${Prisma.join(productoIds)})
+            FOR UPDATE`)
+        : [];
+      const filasVariantes = varianteIds.length
+        ? await tx.$queryRaw<FilaVarianteCompra[]>(Prisma.sql`
+            SELECT Variante_ID, Producto_ID, Stock_Actual, Costo_Unitario, Margen_Ganancia, Activo
+            FROM producto_variantes
+            WHERE Variante_ID IN (${Prisma.join(varianteIds)})
+            FOR UPDATE`)
+        : [];
+
+      const productosVigentes = new Map(
+        filasProductos.map((p) => [p.Producto_ID, {
+          stock: Number(p.Stock_Actual),
+          costoD4: toD4(p.Costo_Promedio),
+          margen: Number(p.Margen_Ganancia) > 0
+            ? Number(p.Margen_Ganancia)
+            : Number(p.Margen_Categoria ?? 0),
+          activo: p.Activo,
+        }]),
+      );
+      const variantesVigentes = new Map(
+        filasVariantes.map((v) => [v.Variante_ID, v]),
+      );
+
       for (const item of detalles) {
-        const producto = await tx.productos.findUnique({
-          where: { Producto_ID: Number(item.Producto_ID) },
-          include: { categorias: { select: { Margen_Sugerido: true } } },
-        });
-        if (!producto || !producto.Activo) {
+        const producto = productosVigentes.get(Number(item.Producto_ID));
+        if (!producto || !producto.activo) {
           throw new Error(
-            `VALIDACION:El producto con ID ${item.Producto_ID} no existe o está inactivo`
+            `VALIDACION:El producto con ID ${item.Producto_ID} no existe o está inactivo`,
           );
         }
-        // Margen efectivo del producto: propio o heredado de la categoría.
-        const margenProp = Number(producto.Margen_Ganancia);
-        const margenCat = producto.categorias?.Margen_Sugerido != null
-          ? Number(producto.categorias.Margen_Sugerido)
-          : 0;
-        productosVigentes.set(Number(item.Producto_ID), {
-          stock: Number(producto.Stock_Actual),
-          costoD4: toD4(producto.Costo_Promedio),
-          margen: margenProp > 0 ? margenProp : margenCat,
-          varianteId: item.Variante_ID != null ? Number(item.Variante_ID) : null,
-        });
+        const cantidad = Number(item.Cantidad);
+        if (!Number.isInteger(cantidad) || cantidad <= 0) {
+          throw new Error(`VALIDACION:La cantidad del producto ${item.Producto_ID} debe ser un entero mayor que cero`);
+        }
+        if (item.Variante_ID != null) {
+          const variante = variantesVigentes.get(Number(item.Variante_ID));
+          if (!variante || !variante.Activo || variante.Producto_ID !== Number(item.Producto_ID)) {
+            throw new Error(
+              `VALIDACION:La variante ${item.Variante_ID} no pertenece al producto ${item.Producto_ID}`,
+            );
+          }
+        }
       }
 
       // ── Costos normalizados (el costo de compra es OPCIONAL) ────────────
       // Si el ítem no trae costo (> 0), el detalle se registra con el
       // Costo_Promedio vigente y el CPP NO se recalcula (evita diluir el
       // promedio con un valor que no proviene de una compra real).
-      const normalizados = detalles.map((item: any) => {
+      const normalizados = detalles.map((item: {
+        Producto_ID: number;
+        Cantidad: number;
+        Costo_Unitario?: number;
+        Variante_ID?: number | null;
+      }) => {
         const productoId = Number(item.Producto_ID);
         const vigente = productosVigentes.get(productoId)!;
         const costoEntrada = toD4(item.Costo_Unitario);
@@ -103,7 +180,7 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
             cantidadD4: toD4(cantidad),
             costoD4: costoEntrada,
             recalculaCpp: true,
-            varianteId: vigente.varianteId
+            varianteId: item.Variante_ID != null ? Number(item.Variante_ID) : null
           };
         }
         return {
@@ -112,7 +189,7 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
           cantidadD4: toD4(cantidad),
           costoD4: vigente.costoD4,
           recalculaCpp: false,
-          varianteId: vigente.varianteId
+          varianteId: item.Variante_ID != null ? Number(item.Variante_ID) : null
         };
       });
 
@@ -139,6 +216,9 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
           data: {
             Nota_ID: nuevaNota.Nota_ID,
             Producto_ID: d.productoId,
+            // A-016: conservar la trazabilidad de la variante en el histórico
+            // de compras (la variante ya se actualizaba, pero no se persistía).
+            Variante_ID: d.varianteId,
             Cantidad: d.cantidad,
             Costo_Unitario: aDecimal(d.costoD4),
             Subtotal_Costo: aDecimal(subtotal)
@@ -189,23 +269,26 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
             ...(precioNuevo !== undefined ? { Precio_Venta: precioNuevo } : {}),
           }
         });
+        productosVigentes.set(d.productoId, {
+          stock: nuevoStock,
+          costoD4: cppNuevo,
+          margen: vigente.margen,
+          activo: vigente.activo,
+        });
 
         // ── Variante a nivel matriz (si la nota la especifica) ─────────────
         // Suma stock a la variante, actualiza su costo y, si el producto o su
         // variante tienen margen, recalcula su precio con la cascada
         // Variante → Producto (la base vigente.margen ya cubre la categoría).
         if (d.varianteId != null) {
-          const variant = await tx.producto_variantes.findUnique({
-            where: { Variante_ID: d.varianteId },
-          });
+          const variant = variantesVigentes.get(d.varianteId);
           if (variant && variant.Producto_ID === d.productoId) {
-            const mVar = variant.Margen_Ganancia != null
-              ? Number(variant.Margen_Ganancia)
-              : null;
-            const margenEfectivo = mVar ?? vigente.margen;
             const nuevoStockVar = variant.Stock_Actual + d.cantidad;
             const nuevoCostoVar =
               d.recalculaCpp ? Number(d.costoD4) / 10000 : Number(variant.Costo_Unitario);
+            const margenEfectivo = variant.Margen_Ganancia != null
+              ? Number(variant.Margen_Ganancia)
+              : vigente.margen;
             const nuevoPrecioVar =
               d.recalculaCpp && margenEfectivo > 0
                 ? Number((nuevoCostoVar * (1 + margenEfectivo / 100)).toFixed(6))
@@ -218,6 +301,8 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
                 ...(nuevoPrecioVar !== undefined ? { Precio_Venta: nuevoPrecioVar } : {}),
               },
             });
+            variant.Stock_Actual = nuevoStockVar;
+            if (d.recalculaCpp) variant.Costo_Unitario = new Prisma.Decimal(nuevoCostoVar);
           }
         }
       }
@@ -273,14 +358,10 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
       }
 
       return nuevaNota;
-    }, {
-      // La entrada recalcula CPP + costo/precio por ítem (y su variante) y
-      // registra el impacto en tesorería: elevar timeout para motores fríos
-      // (el default de 5s expiraba en el primer arranque y abortaba la tx).
-      timeout: 30000,
-      maxWait: 20000
     });
 
+    IoStore.emitDbUpdate('inventario', `Entrada de mercancía registrada: Nota #${resultado.Nota_ID}`, { notaId: resultado.Nota_ID });
+    IoStore.emitDbUpdate('caja', `Movimiento de caja por entrada de mercancía: Nota #${resultado.Nota_ID}`, { notaId: resultado.Nota_ID });
     return res.status(201).json({ message: 'Nota de entrega registrada con éxito', nota: resultado });
   } catch (error: any) {
     // Errores de validación de negocio lanzados dentro de la transacción
@@ -301,6 +382,252 @@ export const createNotaEntrega = async (req: AuthRequest, res: Response) => {
       message: status === 409 ? error.message : 'Error al procesar la entrada de mercancía',
       ...(status === 409 ? { tipo: 'CAJA_CERRADA' } : {}),
       ...(status === 400 && !error.message.startsWith('VALIDACION:') ? { error: error.message } : {})
+    });
+  }
+};
+
+/**
+ * reverseNotaEntrega — A-017: anulación/reversa de una nota de entrada.
+ *
+ * Diseño (ver doc/01_HALLAZGOS_Y_RIESGOS.md A-017 y REGISTRO_DECISIONES ADR-008):
+ *  - NO destructiva: la nota original se conserva y solo se marca Estatus='Anulada'
+ *    con actor (Anulada_Por), fecha y motivo.
+ *  - Autorización: solo ADMIN o SUPERVISOR (operación financiera sensible).
+ *  - Idempotente: una nota ya 'Anulada' → 409 YA_ANULADA.
+ *  - Transaccional y serializada: bloqueo FOR UPDATE sobre productos/variantes;
+ *    reintenta ante deadlock (igual que createNotaEntrega).
+ *  - Casos AMBIGUOS se BLOQUEAN con código explícito en vez de adivinar:
+ *      · PARCIAL_CONSUMIDO → 409: parte de la mercancía ya se vendió/consumió
+ *        (reversa parcial requiere decisión de negocio).
+ *      · CXP_CON_PAGOS → 409: la cuenta por pagar tiene pagos aplicados; reversar
+ *        primero el pago.
+ *  - Caso limpio (implementado y validado en QA):
+ *      · Crédito + CxP Pendiente (Monto_Pagado=0) → se anula la CxP (no borra).
+ *      · Contado → requiere caja abierta; crea INGRESO y repone el saldo.
+ *      · Stock de producto y variante se revierte (floored a 0).
+ *      · CMP del producto se revierte con el inverso ponderado del promedio.
+ */
+export const reverseNotaEntrega = async (req: AuthRequest, res: Response) => {
+  try {
+    const Usuario_ID = req.user?.usuarioId;
+    const rol = (req.user?.rol ?? '').toString().toUpperCase();
+    if (!Usuario_ID) {
+      return res.status(401).json({ message: 'Token sin identificación de usuario' });
+    }
+    // Solo ADMIN o SUPERVISOR pueden anular una nota de entrada.
+    if (rol !== 'ADMIN' && rol !== 'SUPERVISOR') {
+      return res.status(403).json({
+        message: 'No autorizado para anular notas de entrada',
+        tipo: 'PERMISO_INSUFICIENTE'
+      });
+    }
+
+    const notaId = Number(req.params.id ?? req.body.Nota_ID);
+    if (!Number.isInteger(notaId) || notaId <= 0) {
+      return res.status(400).json({ message: 'Nota_ID inválido' });
+    }
+    const motivo = (req.body?.motivo ?? '').toString().slice(0, 200);
+
+    const resultado = await reintentarEnDeadlock(
+      prisma,
+      { timeout: 30000, maxWait: 20000 },
+      async (tx) => {
+        const nota = await tx.notas_entrega_entrada.findUnique({
+          where: { Nota_ID: notaId },
+          include: {
+            detalle_notas_entrega: { include: { productos: true, producto_variantes: true } },
+            cuentas_por_pagar: true
+          }
+        });
+        if (!nota) {
+          const e: any = new Error('NOTA_NO_ENCONTRADA');
+          e.status = 404;
+          throw e;
+        }
+        if (nota.Estatus === 'Anulada') {
+          const e: any = new Error('YA_ANULADA');
+          e.status = 409;
+          throw e;
+        }
+        if (nota.Estatus !== 'Procesada') {
+          const e: any = new Error(`ESTADO_NO_ANULABLE:${nota.Estatus}`);
+          e.status = 400;
+          throw e;
+        }
+
+        const cxp = nota.cuentas_por_pagar;
+        const detalles = nota.detalle_notas_entrega;
+
+        // ── Lock determinista de productos/variantes ───────────────────────
+        const productoIds = Array.from(new Set(detalles.map((d) => d.Producto_ID))).sort((a, b) => a - b);
+        const varianteIds = Array.from(
+          new Set(detalles.map((d) => d.Variante_ID).filter((x): x is number => x != null))
+        ).sort((a, b) => a - b);
+
+        const filasProductos = productoIds.length
+          ? await tx.$queryRaw<FilaProductoCompra[]>(Prisma.sql`
+              SELECT p.Producto_ID, p.Stock_Actual, p.Costo_Promedio,
+                     p.Margen_Ganancia, c.Margen_Sugerido AS Margen_Categoria, p.Activo
+              FROM productos p
+              LEFT JOIN categorias c ON c.Categoria_ID = p.Categoria_ID
+              WHERE p.Producto_ID IN (${Prisma.join(productoIds)})
+              FOR UPDATE`)
+          : [];
+        const filasVariantes = varianteIds.length
+          ? await tx.$queryRaw<FilaVarianteCompra[]>(Prisma.sql`
+              SELECT Variante_ID, Producto_ID, Stock_Actual, Costo_Unitario, Margen_Ganancia, Activo
+              FROM producto_variantes
+              WHERE Variante_ID IN (${Prisma.join(varianteIds)})
+              FOR UPDATE`)
+          : [];
+
+        // ── Chequeo de mercancía aún disponible (no parcialmente vendida) ──
+        const recibidoProd = new Map<number, number>();
+        const recibidoVar = new Map<number, number>();
+        for (const d of detalles) {
+          recibidoProd.set(d.Producto_ID, (recibidoProd.get(d.Producto_ID) ?? 0) + Number(d.Cantidad));
+          if (d.Variante_ID != null) {
+            recibidoVar.set(d.Variante_ID, (recibidoVar.get(d.Variante_ID) ?? 0) + Number(d.Cantidad));
+          }
+        }
+        const stockProd = new Map(filasProductos.map((p) => [p.Producto_ID, Number(p.Stock_Actual)]));
+        const stockVar = new Map(filasVariantes.map((v) => [v.Variante_ID, Number(v.Stock_Actual)]));
+        for (const [pid, rec] of recibidoProd) {
+          if ((stockProd.get(pid) ?? 0) < rec) {
+            const e: any = new Error(`PARCIAL_CONSUMIDO:producto ${pid} stock=${stockProd.get(pid)} recibido=${rec}`);
+            e.status = 409;
+            throw e;
+          }
+        }
+        for (const [vid, rec] of recibidoVar) {
+          if ((stockVar.get(vid) ?? 0) < rec) {
+            const e: any = new Error(`PARCIAL_CONSUMIDO:variante ${vid} stock=${stockVar.get(vid)} recibido=${rec}`);
+            e.status = 409;
+            throw e;
+          }
+        }
+
+        // ── CxP (Crédito) o recuperación de caja (Contado) ─────────────────
+        if (cxp) {
+          if (Number(cxp.Monto_Pagado) > 0) {
+            const e: any = new Error(`CXP_CON_PAGOS:Monto_Pagado=${cxp.Monto_Pagado}`);
+            e.status = 409;
+            throw e;
+          }
+          await tx.cuentas_por_pagar.update({
+            where: { CxP_ID: cxp.CxP_ID },
+            data: { Estatus: 'Anulada', Saldo: 0 }
+          });
+        } else {
+          const caja = await exigirCajaAbierta(tx);
+          await tx.movimientos_caja.create({
+            data: {
+              Caja_ID: caja.Caja_ID,
+              Tipo: 'INGRESO',
+              Concepto: `Anulación de nota de entrada #${nota.Nota_ID} (${nota.Numero_Nota})`,
+              Metodo_Pago: 'Efectivo USD',
+              Monto_USD: nota.Total_Costo,
+              Origen_Tipo: 'nota',
+              Origen_ID: nota.Nota_ID
+            }
+          });
+          await tx.caja.update({
+            where: { Caja_ID: caja.Caja_ID },
+            data: { Saldo_Actual: { increment: nota.Total_Costo } }
+          });
+        }
+
+        // ── Reversión de stock y CMP (inverso ponderado del promedio) ──────
+        const mapaProd = new Map(filasProductos.map((p) => [p.Producto_ID, p]));
+        for (const d of detalles) {
+          const fila = mapaProd.get(d.Producto_ID)!;
+          const stockNow = Number(fila.Stock_Actual);
+          const qty = Number(d.Cantidad);
+          const nuevoStock = stockNow - qty; // >=0 por el chequeo previo
+
+          const costoDetalleD4 = toD4(d.Costo_Unitario);
+          const cppNowD4 = toD4(fila.Costo_Promedio);
+          let cppNuevoD4 = cppNowD4;
+          if (costoDetalleD4 > 0n) {
+            const stockPrev = nuevoStock;
+            if (stockPrev > 0) {
+              const numerador = subD4(
+                mulD4(toD4(stockNow), cppNowD4),
+                mulD4(toD4(qty), costoDetalleD4)
+              );
+              let cpp = divD4(numerador, toD4(stockPrev));
+              cpp = cpp < 0n ? 0n : cpp;
+              cppNuevoD4 = cpp;
+            } else {
+              cppNuevoD4 = 0n;
+            }
+          }
+
+          await tx.productos.update({
+            where: { Producto_ID: d.Producto_ID },
+            data: {
+              Stock_Actual: nuevoStock,
+              ...(costoDetalleD4 > 0n ? { Costo_Promedio: aDecimal(cppNuevoD4) } : {})
+            }
+          });
+          // Mantener el objeto en memoria coherente para líneas siguientes.
+          fila.Stock_Actual = nuevoStock;
+          fila.Costo_Promedio = aDecimal(cppNuevoD4) as unknown as Prisma.Decimal;
+
+          // Variante: reversión de stock; el costo de variante queda igual salvo
+          // que, si queda en 0, se resetea a 0 (limitación documentada A-017).
+          if (d.Variante_ID != null) {
+            const filaV = filasVariantes.find((v) => v.Variante_ID === d.Variante_ID);
+            if (filaV && filaV.Producto_ID === d.Producto_ID) {
+              const nuevoStockVar = Number(filaV.Stock_Actual) - qty;
+              await tx.producto_variantes.update({
+                where: { Variante_ID: d.Variante_ID },
+                data: {
+                  Stock_Actual: nuevoStockVar,
+                  ...(nuevoStockVar <= 0 ? { Costo_Unitario: 0 } : {})
+                }
+              });
+              filaV.Stock_Actual = nuevoStockVar;
+            }
+          }
+        }
+
+        // ── Marcar nota como anulada (preservar historial) ──────────────────
+        const notaAnulada = await tx.notas_entrega_entrada.update({
+          where: { Nota_ID: nota.Nota_ID },
+          data: {
+            Estatus: 'Anulada',
+            Anulada_Por: Number(Usuario_ID),
+            Fecha_Anulacion: new Date(),
+            Motivo_Anulacion: motivo || 'Anulación de nota de entrada'
+          }
+        });
+
+        return { nota: notaAnulada, formaPago: cxp ? 'Credito' : 'Contado' };
+      }
+    );
+
+    IoStore.emitDbUpdate('inventario', `Nota de entrada #${resultado.nota.Nota_ID} anulada`, { notaId: resultado.nota.Nota_ID });
+    IoStore.emitDbUpdate('caja', `Reversa de nota de entrada #${resultado.nota.Nota_ID} (${resultado.formaPago})`, { notaId: resultado.nota.Nota_ID });
+    return res.status(200).json({
+      message: 'Nota de entrada anulada correctamente',
+      nota: resultado.nota,
+      formaPago: resultado.formaPago
+    });
+  } catch (error: any) {
+    if (typeof error?.status === 'number') {
+      const tipo = error.message.startsWith('NOTA_NO_ENCONTRADA') ? 'NOTA_NO_ENCONTRADA'
+        : error.message.startsWith('YA_ANULADA') ? 'YA_ANULADA'
+        : error.message.startsWith('PARCIAL_CONSUMIDO') ? 'PARCIAL_CONSUMIDO'
+        : error.message.startsWith('CXP_CON_PAGOS') ? 'CXP_CON_PAGOS'
+        : error.message.startsWith('ESTADO_NO_ANULABLE') ? 'ESTADO_NO_ANULABLE'
+        : 'ERROR';
+      return res.status(error.status).json({ message: error.message, tipo });
+    }
+    const status = typeof error?.status === 'number' ? error.status : 400;
+    return res.status(status).json({
+      message: 'Error al anular la nota de entrada',
+      ...(error?.message ? { error: error.message } : {})
     });
   }
 };

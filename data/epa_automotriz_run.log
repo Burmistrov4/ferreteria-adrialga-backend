@@ -1,0 +1,15 @@
+
+== Categoría: automotriz ==
+    [pass1] automotriz p=1: +32 (total 32)
+    [pass1] automotriz p=2: +32 (total 64)
+    [pass1] automotriz p=3: +32 (total 96)
+    [pass1] automotriz p=4: +32 (total 128)
+    [pass1] automotriz p=5: +32 (total 160)
+    [pass1] automotriz p=6: +31 (total 191)
+    [pass1] automotriz p=7: +32 (total 223)
+    [pass1] automotriz p=8: +32 (total 255)
+    [pass1] automotriz p=9: +15 (total 270)
+  fichas=270 nuevas_a_procesar=270 (checkpoint=0)
+  == automotriz: productos=270 imagenes=270 -> C:\Users\Loro\Desktop\Cuarto Semestre\3. Analisis de Sistemas II\Adrialga_Sistema_Renovado\adrialga-backend\data\epa\automotriz.json
+
+== FIN MASIVO == productos=270 imagenes=270 urls=270

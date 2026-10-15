@@ -13,7 +13,16 @@ export const authenticateToken = (req: AuthRequest, res: Response, next: NextFun
     return res.status(401).json({ message: 'Acceso denegado: Token no proporcionado' });
   }
 
-  jwt.verify(token, process.env.JWT_SECRET || 'secret', (err, user: any) => {
+  // Fail-closed: si por algún motivo JWT_SECRET no está configurado, ningún
+  // token es válido (nunca se asume una clave por defecto forjable). El
+  // arranque de index.ts ya aborta si falta, pero el middleware se defiende
+  // también por si se invoca fuera del flujo habitual.
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    return res.status(500).json({ code: 'AUTH_NO_CONFIGURADO', message: 'Auth no configurada' });
+  }
+
+  jwt.verify(token, jwtSecret, (err, user: any) => {
     if (err) {
       // 401 + código explícito: el frontend intercepta TOKEN_EXPIRADO para
       // guardar el carrito y redirigir al login con mensaje (no 403 ambiguo).

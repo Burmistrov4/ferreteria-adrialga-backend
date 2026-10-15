@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/db';
 import { siguienteSkuPorCategoria } from '../utils/sku';
+import { responderErrorPrisma } from '../utils/errores';
 
 /**
  * Motor precio/margen (Fase 2): tipo de resolución forzado en servidor para
@@ -44,18 +45,129 @@ function resolverPrecioYMargen(opts: {
   return out;
 }
 
-export const getProductos = async (_req: Request, res: Response) => {
+import { IoStore } from '../utils/socket';
+
+/**
+ * GET /api/productos?q=&categoriaId=&limit=&offset=
+ *
+ * Retrocompatible: SIN parámetros devuelve exactamente el mismo arreglo de
+ * siempre. Con parámetros permite paginar/filtrar en servidor, imprescindible
+ * desde que el catálogo EPA elevó el inventario a ~7.200 ítems (cargar todo
+ * en el cliente colapsaba la tabla de Flutter).
+ *
+ * El total que coincide con el filtro viaja en la cabecera `X-Total-Count`
+ * para que la UI pueda paginar sin una segunda petición de conteo.
+ */
+export const getProductos = async (req: Request, res: Response) => {
   try {
     // Solo productos activos: un ítem desactivado (soft-delete) no puede
     // ser vendido de nuevo desde ninguna terminal POS o compra.
-    const productos = await prisma.productos.findMany({
-      where: { Activo: true },
-      include: { categorias: true },
-      orderBy: { Producto_ID: 'desc' }
-    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const where: any = { Activo: true };
+
+    const q = (req.query.q ?? '').toString().trim();
+    if (q) {
+      where.OR = [
+        { Nombre: { contains: q } },
+        { SKU_Codigo: { contains: q } },
+        { Codigo_EPA: { contains: q } },
+        { Marca: { contains: q } },
+      ];
+    }
+
+    // `categoriaId` admite lista separada por comas (1,2,3) para filtrar por
+    // un subárbol completo de categorías (padre + descendientes).
+    const idsRaw = (req.query.ids ?? '').toString().trim();
+    if (idsRaw) {
+      const ids = idsRaw
+        .split(',')
+        .map((s) => Number(s.trim()))
+        .filter((n) => Number.isInteger(n) && n > 0)
+        .slice(0, 50);
+      if (ids.length) where.Producto_ID = { in: ids };
+    }
+
+    const idsCat = (req.query.categoriaId ?? '').toString().trim();
+    if (idsCat) {
+      const ids = idsCat
+        .split(',')
+        .map((s) => Number(s.trim()))
+        .filter((n) => Number.isInteger(n) && n > 0);
+      if (ids.length) where.Categoria_ID = { in: ids };
+    }
+
+    // Filtro de existencias compartido por POS e Inventario.
+    // `conStock` se conserva por compatibilidad; `sinStock` identifica
+    // explícitamente agotados. Nunca se interpreta un error de carga como stock 0.
+    const conStockRaw = (req.query.conStock ?? '').toString().trim().toLowerCase();
+    const sinStockRaw = (req.query.sinStock ?? '').toString().trim().toLowerCase();
+    const pideConStock = conStockRaw === '1' || conStockRaw === 'true';
+    const pideSinStock = sinStockRaw === '1' || sinStockRaw === 'true';
+    if (pideConStock && pideSinStock) {
+      return res.status(400).json({
+        code: 'FILTRO_STOCK_INVALIDO',
+        message: 'Seleccione con existencia o sin existencia, no ambos.',
+      });
+    }
+    if (pideConStock) where.Stock_Actual = { gt: 0 };
+    if (pideSinStock) where.Stock_Actual = { lte: 0 };
+
+    // Filtro por PROVEEDOR: el vínculo producto↔proveedor se deriva de las
+    // notas de entrega (compras reales). Regla de procedencia del catálogo
+    // demo: los ítems importados de EPA (Codigo_EPA presente) que aún no tienen
+    // ninguna nota registrada también se atribuyen a FERRETERIA EPA (id 9).
+    // `proveedorId=0` lista los productos sin proveedor atribuible.
+    const provRaw = (req.query.proveedorId ?? '').toString().trim();
+    if (provRaw !== '') {
+      const provId = Number(provRaw);
+      if (Number.isInteger(provId) && provId > 0) {
+        const comprados = {
+          detalle_notas_entrega: {
+            some: { notas_entrega_entrada: { Proveedor_ID: provId } },
+          },
+        };
+        where.AND = [
+          ...(where.AND ?? []),
+          provId === 9
+            ? {
+                OR: [
+                  comprados,
+                  { Codigo_EPA: { not: null }, detalle_notas_entrega: { none: {} } },
+                ],
+              }
+            : comprados,
+        ];
+      } else if (provId === 0) {
+        where.detalle_notas_entrega = { none: {} };
+        where.Codigo_EPA = null;
+      }
+      // Valores no enteros se ignoran a propósito (no rompen el listado).
+    }
+
+    const limitRaw = Number(req.query.limit);
+    const offsetRaw = Number(req.query.offset);
+    const limit =
+      Number.isInteger(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 500) : null;
+    const offset = Number.isInteger(offsetRaw) && offsetRaw > 0 ? offsetRaw : 0;
+
+    const [productos, total] = await Promise.all([
+      prisma.productos.findMany({
+        where,
+        include: { categorias: true },
+        orderBy: { Producto_ID: 'desc' },
+        ...(limit ? { take: limit, skip: offset } : {}),
+      }),
+      prisma.productos.count({ where }),
+    ]);
+
+    // Cabecera expuesta vía CORS (ver `exposedHeaders` en index.ts).
+    res.setHeader('X-Total-Count', String(total));
     res.json(productos);
   } catch (error) {
-    res.status(500).json({ message: 'Error al obtener productos', error });
+    return responderErrorPrisma(res, error, {
+      recurso: 'producto',
+      contexto: 'obtener los',
+    });
   }
 };
 
@@ -73,7 +185,10 @@ export const getProductoById = async (req: Request, res: Response) => {
 
     res.json(producto);
   } catch (error) {
-    res.status(500).json({ message: 'Error al obtener el producto', error });
+    return responderErrorPrisma(res, error, {
+      recurso: 'producto',
+      contexto: 'obtener el',
+    });
   }
 };
 
@@ -134,6 +249,11 @@ export const createProducto = async (req: Request, res: Response) => {
       });
     });
 
+    IoStore.emitDbUpdate(
+      'inventario',
+      `Nuevo producto: ${nuevoProducto.Nombre} (SKU ${nuevoProducto.SKU_Codigo})`,
+      { productoId: nuevoProducto.Producto_ID },
+    );
     res.status(201).json(nuevoProducto);
   } catch (error) {
     if (error instanceof Error && error.message === 'CATEGORIA_NO_ENCONTRADA') {
@@ -142,11 +262,17 @@ export const createProducto = async (req: Request, res: Response) => {
     // Colisión por SKU duplicado (restricción @unique)
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       return res.status(409).json({
-        message: 'El código SKU ya existe. Refresque la sugerencia o ingrese uno diferente.'
+        success: false,
+        code: 'DUPLICADO',
+        message: 'El código SKU ya existe. Refresque la sugerencia o ingrese uno diferente.',
+        error: 'El código SKU ya existe. Refresque la sugerencia o ingrese uno diferente.',
       });
     }
-    console.error('Error al registrar producto:', error);
-    res.status(500).json({ message: 'Error al registrar el producto', error });
+    // FASE 3: el resto se mapea con el contrato uniforme.
+    return responderErrorPrisma(res, error, {
+      recurso: 'producto',
+      contexto: 'registrar el',
+    });
   }
 };
 
@@ -173,7 +299,18 @@ export const updateProducto = async (req: Request, res: Response) => {
       margen: Margen_Ganancia,
     });
 
-    const productoActualizado = await prisma.productos.update({
+    const productoActualizado = await prisma.$transaction(async (tx) => {
+      // Ajustes administrativos de stock también deben serializarse frente a
+      // ventas, entradas y reversas: primero se bloquea la fila y luego se
+      // aplica el valor solicitado dentro de la misma transacción.
+      await tx.$queryRaw(Prisma.sql`
+        SELECT Producto_ID
+        FROM productos
+        WHERE Producto_ID = ${Number(id)}
+        FOR UPDATE
+      `);
+
+      return tx.productos.update({
       where: { Producto_ID: Number(id) },
       data: {
         SKU_Codigo,
@@ -187,12 +324,18 @@ export const updateProducto = async (req: Request, res: Response) => {
         Categoria_ID: Categoria_ID !== undefined ? Number(Categoria_ID) : undefined
       },
       include: { categorias: true }
+      });
     });
 
+    IoStore.emitDbUpdate('inventario', `Producto actualizado: ${productoActualizado.Nombre}`, { productoId: productoActualizado.Producto_ID });
     res.json(productoActualizado);
   } catch (error) {
-    console.error('Error al actualizar producto:', error);
-    res.status(500).json({ message: 'Error al actualizar el producto', error });
+    // FASE 3: P2025 (producto inexistente) -> 404; P2002 (SKU duplicado) -> 409;
+    // P2003 (categoria inexistente) -> 400. Antes todo era 500.
+    return responderErrorPrisma(res, error, {
+      recurso: 'producto',
+      contexto: 'actualizar el',
+    });
   }
 };
 
@@ -265,8 +408,10 @@ export const getVariantesDeProducto = async (req: Request, res: Response) => {
       ejes,
     });
   } catch (error) {
-    console.error('Error al obtener variantes:', error);
-    res.status(500).json({ message: 'Error al obtener las variantes' });
+    return responderErrorPrisma(res, error, {
+      recurso: 'producto',
+      contexto: 'obtener las variantes del',
+    });
   }
 };
 
@@ -347,15 +492,22 @@ export const crearVariantesBulk = async (req: Request, res: Response) => {
       return { creadas: creadas.length, actualizadas: actualizadas.length };
     }, { timeout: 30000, maxWait: 20000 });
 
+    // Alta/edición masiva puede cambiar stock, precio, costo y atributos.
+    IoStore.emitDbUpdate('inventario', `Variantes sincronizadas para producto #${productoId}`, {
+      productoId,
+      creadas: resultado.creadas,
+      actualizadas: resultado.actualizadas,
+    });
     res.status(201).json({ ok: true, ...resultado });
-  } catch (error: any) {
-    if (error?.code === 'P2002') {
-      return res
-        .status(409)
-        .json({ message: 'SKU de variante en conflicto con otra existente' });
+  } catch (error: unknown) {
+    if ((error as any)?.code === 'P2002') {
+      const msg = 'SKU de variante en conflicto con otra existente';
+      return res.status(409).json({ success: false, code: 'DUPLICADO', message: msg, error: msg });
     }
-    console.error('Error en bulk de variantes:', error);
-    res.status(500).json({ message: 'Error al crear las variantes' });
+    return responderErrorPrisma(res, error, {
+      recurso: 'variante',
+      contexto: 'crear las',
+    });
   }
 };
 
@@ -367,9 +519,19 @@ export const actualizarVariante = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'ID de variante inválido' });
     }
     const { stock, costo, precio, activo, margen } = req.body ?? {};
-    const actualizada = await prisma.producto_variantes
-      .update({
-        where: { Variante_ID: id },
+    const actualizada = await prisma.$transaction(async (tx) => {
+      // La edición manual de stock de una variante debe serializarse frente
+      // a ventas, entradas y reversas que también tocan esta fila.
+      await tx.$queryRaw(Prisma.sql`
+        SELECT Variante_ID
+        FROM producto_variantes
+        WHERE Variante_ID = ${id}
+        FOR UPDATE
+      `);
+
+      return tx.producto_variantes
+        .update({
+          where: { Variante_ID: id },
         data: {
           Stock_Actual: stock !== undefined ? Number(stock) : undefined,
           Costo_Unitario: costo !== undefined ? Number(costo) : undefined,
@@ -380,11 +542,16 @@ export const actualizarVariante = async (req: Request, res: Response) => {
             : undefined,
           Activo: typeof activo === 'boolean' ? activo : undefined,
         },
-      })
-      .catch(() => null);
+        })
+        .catch(() => null);
+    });
     if (!actualizada) {
       return res.status(404).json({ message: 'Variante no encontrada' });
     }
+    IoStore.emitDbUpdate('inventario', `Variante actualizada (ID ${actualizada.Variante_ID})`, {
+      varianteId: actualizada.Variante_ID,
+      productoId: actualizada.Producto_ID,
+    });
     res.json({
       varianteId: actualizada.Variante_ID,
       stock: Number(actualizada.Stock_Actual),
@@ -393,8 +560,10 @@ export const actualizarVariante = async (req: Request, res: Response) => {
       activo: actualizada.Activo,
     });
   } catch (error) {
-    console.error('Error al actualizar variante:', error);
-    res.status(500).json({ message: 'Error al actualizar la variante' });
+    return responderErrorPrisma(res, error, {
+      recurso: 'variante',
+      contexto: 'actualizar la',
+    });
   }
 };
 
@@ -427,6 +596,7 @@ export const eliminarVariante = async (req: Request, res: Response) => {
       where: { Variante_ID: id },
       data: { Activo: false },
     });
+    IoStore.emitDbUpdate('inventario', `Variante desactivada (ID ${id})`, { varianteId: id });
     res.json({
       ok: true,
       eliminacionFisica: vendida == null,
@@ -435,8 +605,10 @@ export const eliminarVariante = async (req: Request, res: Response) => {
         : 'Variante archivada (tiene historial de ventas)'
     });
   } catch (error) {
-    console.error('Error al eliminar variante:', error);
-    res.status(500).json({ message: 'Error al eliminar la variante' });
+    return responderErrorPrisma(res, error, {
+      recurso: 'variante',
+      contexto: 'eliminar la',
+    });
   }
 };
 
@@ -450,8 +622,14 @@ export const deleteProducto = async (req: Request, res: Response) => {
       prisma.producto_variantes.deleteMany({ where: { Producto_ID: id } }),
       prisma.productos.delete({ where: { Producto_ID: id } }),
     ]);
+    IoStore.emitDbUpdate('inventario', `Producto eliminado (ID ${id})`, { productoId: id });
     res.json({ message: 'Producto eliminado correctamente' });
   } catch (error) {
-    res.status(500).json({ message: 'Error al eliminar el producto', error });
+    // P2003 aqui es el caso importante: el producto esta referenciado por
+    // facturas/notas. Antes se devolvia 500; ahora 400 accionable.
+    return responderErrorPrisma(res, error, {
+      recurso: 'producto',
+      contexto: 'eliminar el',
+    });
   }
 };

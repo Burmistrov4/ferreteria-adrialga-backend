@@ -1,0 +1,28 @@
+== DEV (NODE_ENV no es production): LAN/local permitidos ==
+PASS · DEV: origen Vercel permitido
+PASS · DEV: alias Vercel permitido
+PASS · DEV: GitHub Pages permitido
+PASS · DEV: subdominio GitHub Pages permitido
+PASS · DEV: localhost:3000 permitido
+PASS · DEV: localhost:5173 permitido
+PASS · DEV: 127.0.0.1 permitido
+PASS · DEV: IP LAN permitido
+PASS · DEV: IP pública/WAN permitido
+PASS · DEV: origen ausente (app nativa) permitido
+PASS · DEV: CORS_ORIGINS extra permitido
+PASS · DEV: origen rogue denegado
+
+== PRODUCCIÓN (NODE_ENV=production): SOLO orígenes explícitos/GitHub Pages ==
+PASS · PROD: Vercel permitido
+PASS · PROD: GitHub Pages permitido
+PASS · PROD: origen ausente (app nativa) permitido
+PASS · PROD: CORS_ORIGINS extra permitido
+PASS · PROD: localhost:3000 permitido (whitelist loopback)
+PASS · PROD: localhost puerto arbitrario DENEGADO
+PASS · PROD: 127.0.0.1 DENEGADO
+PASS · PROD: IP LAN DENEGADO
+PASS · PROD: IP pública DENEGADO
+PASS · PROD: origen rogue DENEGADO
+
+== RESUMEN ==
+TODO PASS · validador CORS coherente con orígenes legítimos del frontend

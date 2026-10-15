@@ -1,0 +1,10 @@
+PASS · createNotaEntrega devuelve 201 · status=201
+PASS · 3 detalles creados · n=3
+PASS · Variantes persistidas = [V1, null, V2] · [31,null,32]
+PASS · Stock V1 = 5 · stock=5
+PASS · Stock V2 = 2 · stock=2
+PASS · Stock producto = 10 · stock=10
+PASS · Lectura expone variante en detalle · [31,null,32]
+
+== RESUMEN A-016 ==
+TODO PASS · trazabilidad de variantes en compras verificada

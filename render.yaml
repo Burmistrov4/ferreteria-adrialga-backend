@@ -1,0 +1,48 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Blueprint de Render — Adrialga
+#
+# Al crear un servicio desde este repositorio, Render lee este archivo y
+# configura todo solo. Alternativa: crear el servicio a mano en el panel con
+# estos mismos valores.
+#
+# UN ÚNICO servicio gratuito sirve la API, el canal Socket.IO y la web Flutter.
+# El motivo es el cupo: el plan Free concede 750 horas-mes por espacio de
+# trabajo y un servicio encendido 24/7 consume ~744. Un segundo servicio
+# gratuito agotaría el cupo y Render suspendería AMBOS hasta el mes siguiente.
+# Por eso el microservicio de scrapers de Python NO se despliega aquí: el
+# backend ya obtiene la tasa BCV por su cuenta (nivel 1b de la cascada).
+#
+# La base de datos NO va aquí: Render no ofrece MySQL gratuito (su Postgres free
+# caduca a los 30 días). Se usa Aiven, que sí es MySQL y no caduca.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  - type: web
+    name: adrialga-api
+    runtime: node
+    plan: free
+    region: ohio
+    branch: main
+    # --include=dev es imprescindible: con NODE_ENV=production npm omite las
+    # dependencias de desarrollo, y `npm run build` necesita typescript y el CLI
+    # de Prisma. Sin esta bandera el build falla.
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # La build de Flutter y las imágenes viven DENTRO del repositorio: en el
+      # plan Free el sistema de archivos es efímero y se pierde al redesplegar.
+      - key: WEB_ROOT
+        value: /opt/render/project/src/web
+      - key: PRODUCTOS_DIR
+        value: /opt/render/project/src/public/productos_deploy
+      # Valores con secreto: se rellenan en el panel de Render, nunca en el repo.
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false

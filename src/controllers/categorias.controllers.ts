@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/db';
 import { siguienteSkuPorCategoria } from '../utils/sku';
+import { responderErrorPrisma } from '../utils/errores';
+import { IoStore } from '../utils/socket';
 
 const REGEX_PREFIJO = /^[A-Z]{3}$/;
 
@@ -9,24 +11,36 @@ export const getCategorias = async (_req: Request, res: Response) => {
     const categorias = await prisma.categorias.findMany();
     res.json(categorias);
   } catch (error) {
-    console.error('Error al obtener categorías:', error);
-    res.status(500).json({ message: 'Error al obtener categorías', error });
+    return responderErrorPrisma(res, error, {
+      recurso: 'categoría',
+      contexto: 'obtener',
+    });
   }
 };
 
 export const updateCategoria = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
+    const idNum = Number(id);
+    if (!Number.isInteger(idNum) || idNum <= 0) {
+      return res.status(400).json({
+        success: false,
+        code: 'NULO_INVALIDO',
+        message: 'ID de categoría inválido',
+      });
+    }
     const { Nombre, Prefijo_SKU, Descripcion, Activo, Margen_Sugerido } = req.body;
 
     if (Prefijo_SKU !== undefined && !REGEX_PREFIJO.test(Prefijo_SKU)) {
       return res.status(400).json({
-        message: 'Prefijo_SKU debe ser de 3 letras mayúsculas (ej. PIN, HER, ELE)'
+        success: false,
+        code: 'NULO_INVALIDO',
+        message: 'Prefijo_SKU debe ser de 3 letras mayúsculas (ej. PIN, HER, ELE)',
       });
     }
 
     const categoriaActualizada = await prisma.categorias.update({
-      where: { Categoria_ID: Number(id) },
+      where: { Categoria_ID: idNum },
       data: {
         Nombre,
         Prefijo_SKU,
@@ -38,28 +52,42 @@ export const updateCategoria = async (req: Request, res: Response) => {
       }
     });
 
+    IoStore.emitDbUpdate('categorias', `Categoría actualizada: ${categoriaActualizada.Nombre}`, { categoriaId: categoriaActualizada.Categoria_ID });
     res.json(categoriaActualizada);
   } catch (error) {
-    console.error('Error al actualizar la categoría:', error);
-    res.status(500).json({ message: 'Error al actualizar la categoría', error });
+    // Mapeo uniforme: P2025 → 404, P2002 → 409, resto → 500 coherente.
+    return responderErrorPrisma(res, error, {
+      recurso: 'categoría',
+      contexto: 'actualizar',
+    });
   }
 };
 
 export const deleteCategoria = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
+    const idNum = Number(id);
+    if (!Number.isInteger(idNum) || idNum <= 0) {
+      return res.status(400).json({
+        success: false,
+        code: 'NULO_INVALIDO',
+        message: 'ID de categoría inválido',
+      });
+    }
     // Eliminación lógica: se desactiva en lugar de borrar físicamente,
     // para no romper las referencias con productos existentes.
     const categoria = await prisma.categorias.update({
-      where: { Categoria_ID: Number(id) },
+      where: { Categoria_ID: idNum },
       data: { Activo: false }
     });
 
-    // Si por algún motivo la desactivación falla, se intenta el borrado lógico
+    IoStore.emitDbUpdate('categorias', `Categoría desactivada: ${categoria.Nombre}`, { categoriaId: categoria.Categoria_ID });
     res.json({ message: 'Categoría desactivada correctamente', categoria });
   } catch (error) {
-    console.error('Error al eliminar la categoría:', error);
-    res.status(500).json({ message: 'Error al eliminar la categoría', error });
+    return responderErrorPrisma(res, error, {
+      recurso: 'categoría',
+      contexto: 'eliminar',
+    });
   }
 };
 
@@ -95,16 +123,14 @@ export const createCategoria = async (req: Request, res: Response) => {
       }
     });
 
+    IoStore.emitDbUpdate('categorias', `Categoría registrada: ${nuevaCategoria.Nombre}`, { categoriaId: nuevaCategoria.Categoria_ID });
     res.status(201).json(nuevaCategoria);
-  } catch (error: any) {
-    console.error('Error detallado de Prisma:', error);
-    // P2002: violación de restricción única → conflicto legible para la UI.
-    if (error?.code === 'P2002') {
-      return res.status(409).json({
-        message: 'Ya existe una categoría con ese nombre o prefijo SKU.'
-      });
-    }
-    res.status(500).json({ message: 'Error al registrar la categoría' });
+  } catch (error) {
+    // P2002 (nombre/prefijo duplicado) → 409 legible; el resto vía mapeo común.
+    return responderErrorPrisma(res, error, {
+      recurso: 'categoría',
+      contexto: 'registrar',
+    });
   }
 };
 
@@ -115,11 +141,17 @@ export const getSiguienteSku = async (req: Request, res: Response) => {
     const sku = await siguienteSkuPorCategoria(prisma, Number(id));
 
     if (!sku) {
-      return res.status(404).json({ message: 'Categoría no encontrada' });
+      return res.status(404).json({
+        success: false,
+        code: 'NO_ENCONTRADO',
+        message: 'Categoría no encontrada',
+      });
     }
     res.json({ sku_sugerido: sku });
   } catch (error) {
-    console.error('Error al calcular el siguiente SKU:', error);
-    res.status(500).json({ message: 'Error al calcular el siguiente SKU', error });
+    return responderErrorPrisma(res, error, {
+      recurso: 'categoría',
+      contexto: 'calcular el siguiente SKU de',
+    });
   }
 };

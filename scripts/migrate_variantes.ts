@@ -8,7 +8,24 @@
  *
  * Ejecutar: npm run migrate:variantes
  */
-import { prisma } from '../src/config/db';
+// Salvaguarda de destino (ADR-002/007) ANTES de cargar la conexión Prisma.
+/* eslint-disable @typescript-eslint/no-var-requires */
+const guard = require('./qa_guard.cjs');
+if (!process.env.DATABASE_URL) {
+  try { require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }); } catch {}
+}
+const _guardUrl = process.env.DATABASE_URL ?? '';
+if (!_guardUrl) {
+  console.error('ABORTADO: DATABASE_URL no está definida (ni en entorno ni en .env).');
+  process.exit(3);
+}
+const _v = guard.validarHostLocal(_guardUrl);
+if (!_v.ok) {
+  console.error(`ABORTADO: destino de base de datos no permitido (${guard.sanitizar(_guardUrl)}): ${_v.error}`);
+  process.exit(3);
+}
+const { prisma } = require('../src/config/db');
+/* eslint-enable @typescript-eslint/no-var-requires */
 
 async function main() {
   const productos = await prisma.productos.findMany({

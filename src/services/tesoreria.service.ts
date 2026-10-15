@@ -43,20 +43,27 @@ export const TesoreriaService = {
   },
 
   async calcularPatrimonioOperativo() {
-    const caja = await asegurarCajaPrincipal(prisma);
-    const productos = await prisma.productos.findMany({
-      select: { Stock_Actual: true, Costo_Promedio: true },
-    });
+    // El patrimonio es una agregacion escalar. No tiene sentido traer miles
+    // de productos a Node solo para sumar Stock x Costo_Promedio.
+    // La formula contable se mantiene identica, pero la suma la ejecuta MySQL.
+    const [caja, inventarioRaw] = await Promise.all([
+      asegurarCajaPrincipal(prisma),
+      prisma.$queryRaw<{ valorInventario: string | number | null }>`
+        SELECT COALESCE(
+          SUM(Stock_Actual * COALESCE(Costo_Promedio, 0)),
+          0
+        ) AS valorInventario
+        FROM productos
+      `,
+    ]);
 
-    const valorInventario = productos.reduce(
-      (acc: number, p) => acc + Number(p.Stock_Actual) * Number(p.Costo_Promedio ?? 0),
-      0
-    );
+    const valorInventario = Number(inventarioRaw.valorInventario ?? 0);
+    const saldoCaja = Number(caja.Saldo_Actual);
 
     return {
-      caja: Number(caja.Saldo_Actual),
+      caja: saldoCaja,
       inventario: valorInventario,
-      patrimonio: Number(caja.Saldo_Actual) + valorInventario,
+      patrimonio: saldoCaja + valorInventario,
     };
   },
 

@@ -1,10 +1,21 @@
 ﻿import { Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../config/db';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import { normalizarPeriodo, calcularRango, rangoPersonalizado } from '../utils/fechas';
 import { toD4, addD4, mulD4, divD4, aDecimal, IVA_ALIQUOTA, IGTF_ALIQUOTA, CIEN } from '../utils/dinero';
-import { exigirCajaAbierta, CajaCerradaError, ArqueoPendienteError, esEfectivo } from '../utils/caja';
+import { exigirCajaAbierta, CajaCerradaError, ArqueoPendienteError, esEfectivo, reintentarEnDeadlock } from '../utils/caja';
 import { validarPinSupervisorHash } from '../utils/pin_supervisor';
+import { IoStore } from '../utils/socket';
+import { responderErrorPrisma } from '../utils/errores';
+import {
+  StockInsuficienteError,
+  calcularDesgloseFiscal,
+  procesarVenta,
+  esDivisaMetodo,
+  type LineaVentaEntrada,
+  type PagoMixtoEntrada,
+} from '../services/motor_ventas.service';
 
 /**
  * Error semántico: la gaveta no cubre la devolución (regla CERO DÉFICIT).
@@ -18,23 +29,9 @@ export class ReversionSaldoError extends Error {
   }
 }
 
-/**
- * Asigna el siguiente Número de Control fiscal (formato 00-00-XXXXXXXX).
- * El contador es una fila de `contadores_fiscales` incrementada atómicamente
- * dentro de la transacción de la factura (upsert + increment): garantiza
- * secuencia única sin huecos ni duplicados ante ventas concurrentes.
- * La serie reinicia por año natural (CTRL-VENTAS-<anio>).
- */
-async function asignarNumeroControl(tx: any): Promise<string> {
-  const anio = new Date().getUTCFullYear();
-  const clave = `CTRL-VENTAS-${anio}`;
-  const contador = await tx.contadores_fiscales.upsert({
-    where: { Clave: clave },
-    create: { Clave: clave, Valor: 1 },
-    update: { Valor: { increment: 1 } },
-  });
-  return `00-00-${String(contador.Valor).padStart(8, '0')}`;
-}
+// La asignación del Número de Control fiscal ahora vive en el motor de ventas
+// (motor_ventas.service.ts → asignarNumeroControl) y se resuelve dentro de la
+// transacción, eliminando la duplicación y el `tx: any`.
 
 /**
  * Asigna el Número de Control de una Nota de Crédito usando una serie
@@ -54,9 +51,8 @@ async function asignarNCControl(tx: any): Promise<string> {
   return `NC-${anio}-${String(contador.Valor).padStart(8, '0')}`;
 }
 
-// Métodos de pago considerados en divisas extranjeras (base del IGTF 3%).
-// Todo lo demás (VES, Pago Móvil, Punto de Venta) se asume en bolívares.
-const METODOS_DIVISA = ['efectivo usd', 'zelle', 'efectivo (usd)', 'divisas'];
+// Métodos de pago considerados divisa extranjera y la marca de IGTF ahora
+// residen en motor_ventas.service.ts (METODOS_DIVISA / esDivisaMetodo).
 
 // Prisma devuelve las columnas DECIMAL como objetos Decimal (decimal.js).
 // Su toJSON los serializa como cadena, pero lo convertimos a número de forma
@@ -114,19 +110,30 @@ export const getFacturas = async (req: Request, res: Response) => {
       where.Fecha_Emision = { gte: desde, lte: hasta };
     }
 
+    // El historial puede crecer mucho: por defecto la pantalla de registro
+    // solo necesita cabecera + cliente/usuario. Los detalles y pagos se cargan
+    // bajo demanda mediante GET /facturas/:id al abrir/imprimir una factura.
+    const resumen = req.query.resumen !== 'false';
     const facturas = await prisma.facturas.findMany({
       where,
       orderBy: { Fecha_Emision: 'desc' },
       include: {
         clientes: true,
         usuarios: { select: { Usuario_ID: true, Nombre: true } },
-        detalle_facturas: { include: { productos: true, producto_variantes: { include: { atributos: true } } } },
-        pagos: true
+        ...(resumen
+          ? {}
+          : {
+              detalle_facturas: { include: { productos: true, producto_variantes: { include: { atributos: true } } } },
+              pagos: true,
+            }),
       }
     });
     return res.json(facturas.map(sanitizarFactura));
   } catch (error) {
-    return res.status(500).json({ message: 'Error al obtener las facturas', error });
+    return responderErrorPrisma(res, error, {
+      recurso: 'factura',
+      contexto: 'obtener las',
+    });
   }
 };
 
@@ -149,275 +156,185 @@ export const getFacturaById = async (req: Request, res: Response) => {
 
     return res.json(sanitizarFactura(factura));
   } catch (error) {
-    return res.status(500).json({ message: 'Error al obtener la factura', error });
+    return responderErrorPrisma(res, error, {
+      recurso: 'factura',
+      contexto: 'obtener la',
+    });
   }
 };
 
+interface DetallePagoEntrada {
+  efectivoUSD?: unknown;
+  efectivoVES?: unknown;
+  pagoMovil?: unknown;
+  puntoVenta?: unknown;
+  referencia?: unknown;
+  tasaCambio?: unknown;
+}
+
+/**
+ * Valida y tipa el arreglo de detalles en el borde del controlador. Rechaza
+ * cantidades no enteras/negativas y precios inválidos ANTES de tocar la base
+ * de datos (defensa en profundidad + contrato fuerte para el motor de ventas).
+ */
+function normalizarLineas(crudo: unknown): LineaVentaEntrada[] {
+  if (!Array.isArray(crudo)) {
+    throw new Error('El detalle de la venta debe ser un arreglo');
+  }
+  return crudo.map((item, i) => {
+    const li = item as {
+      Producto_ID?: unknown;
+      Variante_ID?: unknown;
+      Cantidad?: unknown;
+      Precio_Unitario?: unknown;
+    };
+    const productoId = Number(li.Producto_ID);
+    const varianteId = li.Variante_ID == null ? null : Number(li.Variante_ID);
+    const cantidad = Number(li.Cantidad);
+    const precio = Number(li.Precio_Unitario);
+    if (!Number.isFinite(productoId) || productoId <= 0) {
+      throw new Error(`Detalle #${i + 1}: Producto_ID inválido`);
+    }
+    if (varianteId !== null && (!Number.isFinite(varianteId) || varianteId <= 0)) {
+      throw new Error(`Detalle #${i + 1}: Variante_ID inválido`);
+    }
+    if (!Number.isInteger(cantidad) || cantidad <= 0) {
+      throw new Error(`Detalle #${i + 1}: Cantidad debe ser un entero mayor a 0`);
+    }
+    if (!Number.isFinite(precio) || precio < 0) {
+      throw new Error(`Detalle #${i + 1}: Precio_Unitario inválido`);
+    }
+    return {
+      Producto_ID: productoId,
+      Variante_ID: varianteId,
+      Cantidad: cantidad,
+      Precio_Unitario: precio,
+    };
+  });
+}
+
 export const createFactura = async (req: AuthRequest, res: Response) => {
-  // Se acepta 'detalles' o 'Detalles' indiferentemente para ser tolerante con el cliente
-  const { Cliente_ID, Numero_Control } = req.body;
-  const detalles = req.body.detalles ?? req.body.Detalles;
+  // Borde tolerante: se acepta 'detalles' o 'Detalles'.
+  const { Cliente_ID, Numero_Control } = req.body as {
+    Cliente_ID?: unknown;
+    Numero_Control?: string;
+  };
+  const detallesCrudos = req.body.detalles ?? req.body.Detalles;
   const Usuario_ID = req.user?.usuarioId;
-  if (!Usuario_ID) {
+  if (Usuario_ID == null) {
     return res.status(401).json({ message: 'Token sin identificación de usuario' });
   }
-
-  if (!Cliente_ID || !detalles || !Array.isArray(detalles) || detalles.length === 0) {
-    return res.status(400).json({
-      message: 'Cliente_ID y al menos un detalle son obligatorios'
-    });
+  if (!Cliente_ID || !Array.isArray(detallesCrudos) || detallesCrudos.length === 0) {
+    return res.status(400).json({ message: 'Cliente_ID y al menos un detalle son obligatorios' });
   }
 
-  // El cliente debe EXISTIR en el maestro: el frontend nunca fuerza un ID
-  // hardcodeado; se exige selección explícita (o el checkbox "Consumidor
-  // Final" que resuelve a un registro real V-00000000 creado por el seed).
   const clienteExiste = await prisma.clientes.findUnique({
     where: { Cliente_ID: Number(Cliente_ID) },
     select: { Cliente_ID: true },
   });
   if (!clienteExiste) {
     return res.status(404).json({
-      message: 'El cliente seleccionado no existe. Revise la asignación antes de cobrar.'
+      message: 'El cliente seleccionado no existe. Revise la asignación antes de cobrar.',
     });
   }
 
-  // Detalle de pagos (multipago) enviado por el módulo de cobro del POS.
-  // Shape esperado: { efectivoUSD, efectivoVES, pagoMovil, puntoVenta, referencia? }
-  const dp = req.body.Detalles_Pago ?? req.body.detallesPago ?? {};
-  const referenciaPago = (dp.referencia ?? null) as string | null;
+  // Multipago del módulo POS, normalizado y TIPADO (sin `any`).
+  const dp = (req.body.Detalles_Pago ?? req.body.detallesPago ?? {}) as DetallePagoEntrada;
+  const referenciaPago =
+    typeof dp.referencia === 'string' && dp.referencia.trim() !== ''
+      ? dp.referencia.trim()
+      : null;
 
   // ── Regla fiscal: la tasa BCV histórica es obligatoria para facturar ──────
   const tasaD4 = toD4(req.body.Tasa_Cambio ?? dp.tasaCambio);
   if (tasaD4 <= 0n) {
     return res.status(400).json({
       message:
-        'La tasa BCV es obligatoria para emitir una factura (no se pudo determinar la tasa de cambio)'
+        'La tasa BCV es obligatoria para emitir una factura (no se pudo determinar la tasa de cambio)',
     });
   }
   const tasaHistorica = aDecimal(tasaD4);
 
-  // Pagos normalizados a 4 decimales, con marca de divisa extranjera.
-  // (metodo, monto escalado)
-  const pagosNormalizados = [
-    { metodo: 'Efectivo USD', monto: toD4(dp.efectivoUSD) },
-    { metodo: 'Efectivo VES', monto: toD4(dp.efectivoVES) },
-    { metodo: 'Pago Móvil', monto: toD4(dp.pagoMovil) },
-    { metodo: 'Punto de Venta', monto: toD4(dp.puntoVenta) }
+  // Normalización de pagos a bigint D4, con marca de divisa resuelta por el motor.
+  const pagosNormalizados: PagoMixtoEntrada[] = [
+    { metodo: 'Efectivo USD', monto: toD4(dp.efectivoUSD), esDivisa: esDivisaMetodo('Efectivo USD') },
+    { metodo: 'Efectivo VES', monto: toD4(dp.efectivoVES), esDivisa: esDivisaMetodo('Efectivo VES') },
+    { metodo: 'Pago Móvil', monto: toD4(dp.pagoMovil), esDivisa: esDivisaMetodo('Pago Móvil') },
+    { metodo: 'Punto de Venta', monto: toD4(dp.puntoVenta), esDivisa: esDivisaMetodo('Punto de Venta') },
   ].filter((p) => p.monto > 0n);
 
-  const esDivisa = (metodo: string) =>
-    METODOS_DIVISA.some((d) => metodo.toLowerCase().includes(d));
-
-  // ── Motor fiscal (precisión exacta 4 decimales, sin floats) ──────────────
-  // Base Imponible (USD) = Σ (Cantidad × Precio_Unitario)
-  let baseImponible = 0n;
-  for (const item of detalles) {
-    baseImponible = addD4(
-      baseImponible,
-      mulD4(toD4(item.Cantidad), toD4(item.Precio_Unitario))
-    );
+  let lineas: LineaVentaEntrada[];
+  try {
+    lineas = normalizarLineas(detallesCrudos);
+  } catch (e) {
+    const mensaje = e instanceof Error ? e.message : 'Detalle de venta inválido';
+    return res.status(400).json({ message: mensaje });
   }
-  // IVA (16%)
-  const totalIva = divD4(mulD4(baseImponible, IVA_ALIQUOTA), CIEN);
-  // IGTF (3%) sobre pagos en divisas EXCLUSIVAMENTE
-  const pagosEnDivisas = pagosNormalizados
-    .filter((p) => esDivisa(p.metodo))
-    .reduce((acc, p) => addD4(acc, p.monto), 0n);
-  const montoIgtf = divD4(mulD4(pagosEnDivisas, IGTF_ALIQUOTA), CIEN);
-  const montoIgtfBs = mulD4(montoIgtf, tasaD4);
-  // Total General = Base + IVA + IGTF
-  const totalGeneral = addD4(addD4(baseImponible, totalIva), montoIgtf);
+
+  // Cálculo fiscal PURO (determinista, sin I/O) — fuera de la transacción.
+  const desglose = calcularDesgloseFiscal(lineas, pagosNormalizados, tasaD4);
 
   try {
-    const resultado = await prisma.$transaction(async (tx) => {
-      // 1. Validar stock disponible (producto y variante, si aplica) y
-      //    capturar el costo vigente usado para el margen histórico.
-      const costosPorDetalle = new Map<number, bigint>();
-      for (const item of detalles) {
-        const prod = await tx.productos.findUnique({
-          where: { Producto_ID: Number(item.Producto_ID) }
-        });
+    // El motor de ventas ejecuta la reserva de inventario + creación de
+    // factura + registro de pagos DENTRO de la transacción (ACID total).
+    const resultado = await reintentarEnDeadlock(
+      prisma,
+      { timeout: 30000, maxWait: 20000 },
+      (tx) =>
+        procesarVenta(tx, {
+          clienteId: Number(Cliente_ID),
+          usuarioId: Number(Usuario_ID),
+          numeroControl: Numero_Control,
+          detalles: lineas,
+          pagos: pagosNormalizados,
+          desglose,
+          tasaHistorica,
+          referenciaPago,
+        }),
+    );
 
-        if (!prod) {
-          throw new Error(`Stock insuficiente para el producto: ${item.Producto_ID}`);
-        }
-
-        let costoLinea = toD4(prod.Costo_Promedio);
-        if (item.Variante_ID != null) {
-          const variante = await tx.producto_variantes.findUnique({
-            where: { Variante_ID: Number(item.Variante_ID) }
-          });
-          if (!variante || variante.Producto_ID !== prod.Producto_ID) {
-            throw new Error(`Variante inválida para el producto: ${prod.Nombre}`);
-          }
-          if (variante.Stock_Actual < Number(item.Cantidad)) {
-            throw new Error(
-              `Stock insuficiente de la variante ${variante.SKU_Variante} (dispone: ${variante.Stock_Actual})`
-            );
-          }
-          // El margen histórico de una variante usa su costo real (no el CPP del padre).
-          costoLinea = toD4(variante.Costo_Unitario);
-        } else if (prod.Stock_Actual < Number(item.Cantidad)) {
-          throw new Error(`Stock insuficiente para el producto: ${prod.Nombre}`);
-        }
-        costosPorDetalle.set(Number(item.Producto_ID) + (item.Variante_ID ?? 0) * 1_000_000, costoLinea);
-      }
-
-      // 3. Crear cabecera y detalles de la factura (montos exactos a 4 decimales)
-      // ── Numeración fiscal SENIAT: si el cliente no envía Número de Control,
-      // se asigna la secuencia transaccional 00-00-XXXXXXXX por año.
-      const numeroControl = Numero_Control || (await asignarNumeroControl(tx));
-
-      const nuevaFactura = await tx.facturas.create({
-        data: {
-          Cliente_ID: Number(Cliente_ID),
-          Usuario_ID: Number(Usuario_ID),
-          Numero_Control: numeroControl,
-          Subtotal: aDecimal(baseImponible),
-          Total_IVA: aDecimal(totalIva),
-          Total_General: aDecimal(totalGeneral),
-          // Tasa BCV histórica (obligatoria, 4 decimales)
-          Tasa_Cambio: tasaHistorica,
-          // IGTF 3% sobre pagos en divisas (USD) y su equivalencia en Bs
-          Monto_IGTF: aDecimal(montoIgtf),
-          Estatus: 'Pagada',
-          detalle_facturas: {
-            create: detalles.map((d: any) => {
-              const cantidad = toD4(d.Cantidad);
-              const precio = toD4(d.Precio_Unitario);
-              const key = Number(d.Producto_ID) + (d.Variante_ID ?? 0) * 1_000_000;
-              return {
-                Producto_ID: Number(d.Producto_ID),
-                Variante_ID: d.Variante_ID != null ? Number(d.Variante_ID) : undefined,
-                Cantidad: Number(d.Cantidad),
-                Precio_Unitario: aDecimal(precio),
-                // Congela el costo vigente (CPP padre o costo real de variante)
-                // para margen histórico exacto por ítem vendido.
-                Costo_Unitario_Historico: aDecimal(
-                  costosPorDetalle.get(key) ?? 0n
-                ),
-                Subtotal: aDecimal(mulD4(cantidad, precio))
-              };
-            })
-          },
-          // Persistencia del multipago: cada método con su monto, referencia (si aplica),
-          // marca de divisa extranjera y la tasa de cambio usada en ese momento.
-          pagos: {
-            create: pagosNormalizados.map((p) => ({
-              Metodo_Pago: p.metodo,
-              Monto: aDecimal(p.monto),
-              Referencia: referenciaPago,
-              Es_Divisa: esDivisa(p.metodo),
-              Tasa_Cambio: tasaHistorica
-            }))
-          }
-        }
-      });
-
-      // 4. Descuento de stock con operación ATÓMICA (anti-carrera real):
-      // `updateMany` evalúa y decrementa en la misma stmt de MySQL. Si el
-      // stock ya no alcanza (carrera entre cajeros), `count: 0` → rollback.
-      for (const item of detalles) {
-        const touched = await tx.productos.updateMany({
-          where: {
-            Producto_ID: Number(item.Producto_ID),
-            Stock_Actual: { gte: Number(item.Cantidad) },
-          },
-          data: { Stock_Actual: { decrement: Number(item.Cantidad) } },
-        });
-        if (touched.count !== 1) {
-          throw new Error(
-            `Stock insuficiente o producto inexistente para el ID ${item.Producto_ID}`
-          );
-        }
-        if (item.Variante_ID != null) {
-          const touchedV = await tx.producto_variantes.updateMany({
-            where: {
-              Variante_ID: Number(item.Variante_ID),
-              Stock_Actual: { gte: Number(item.Cantidad) },
-            },
-            data: { Stock_Actual: { decrement: Number(item.Cantidad) } },
-          });
-          if (touchedV.count !== 1) {
-            throw new Error(
-              `Stock insuficiente o variante inexistente (ID ${item.Variante_ID})`
-            );
-          }
-        }
-      }
-
-      // 5. Impacto en Tesorería: INGRESO en caja por cada pago recibido
-      //    (misma transacción que la factura) + aumento del saldo de caja.
-      if (pagosNormalizados.length > 0) {
-        // Regla de negocio (arqueo): toda venta exige un turno de caja abierto.
-        const caja = await exigirCajaAbierta(tx);
-        // Solo el EFECTIVO (USD/VES físico) altera el saldo de la gaveta.
-        // Digitales (Pago Móvil, Punto, Zelle...) van al banco — se auditan
-        // en movimientos_caja pero no contaminan el arqueo físico.
-        const sumaEfectivo = pagosNormalizados
-          .filter((p) => esEfectivo(p.metodo))
-          .reduce((acc, p) => addD4(acc, p.monto), 0n);
-        if (sumaEfectivo > 0n) {
-          await tx.caja.update({
-            where: { Caja_ID: caja.Caja_ID },
-            data: { Saldo_Actual: { increment: aDecimal(sumaEfectivo) } }
-          });
-        }
-        for (const p of pagosNormalizados) {
-          await tx.movimientos_caja.create({
-            data: {
-              Caja_ID: caja.Caja_ID,
-              Tipo: 'INGRESO',
-              Concepto: `Cobro factura #${nuevaFactura.Factura_ID} (${numeroControl})`,
-              Metodo_Pago: p.metodo,
-              Monto_USD: aDecimal(p.monto),
-              Tasa_Cambio: tasaHistorica,
-              Referencia: referenciaPago,
-              Origen_Tipo: 'factura',
-              Origen_ID: nuevaFactura.Factura_ID
-            }
-          });
-        }
-      }
-
-      return nuevaFactura;
-    }, {
-      // La factura congela CMP por línea, escribe pagos y movimientos de
-      // caja: con engine frío el default de 5s expiraba a media tx (bug
-      // detectado en smoke e2e). 30s de holgura, cola de 20s.
-      timeout: 30000,
-      maxWait: 20000
-    });
-
-    // Hidratación completa post-commit para el comprobante de venta (ticket
-    // térmico/PDF inmediato devuelve todos los detalles, pagos y cliente).
+    // Hidratación completa post-commit para el comprobante de venta.
     const facturaCompleta = await prisma.facturas.findUnique({
       where: { Factura_ID: resultado.Factura_ID },
       include: {
         clientes: true,
         usuarios: true,
         pagos: true,
-        detalle_facturas: { include: { productos: true, producto_variantes: { include: { atributos: true } } } }
-      }
+        detalle_facturas: {
+          include: { productos: true, producto_variantes: { include: { atributos: true } } },
+        },
+      },
     });
+
+    IoStore.emitDbUpdate(
+      'ventas',
+      `Nueva venta registrada: ${facturaCompleta?.Numero_Control ?? 'Factura'} (ID ${resultado.Factura_ID})`,
+      { facturaId: resultado.Factura_ID },
+    );
 
     return res.status(201).json({
       message: 'Factura registrada exitosamente',
-      factura: sanitizarFactura(facturaCompleta)
+      factura: sanitizarFactura(facturaCompleta),
     });
-  } catch (error: any) {
+  } catch (error) {
     // Serialización por instancia (no por status): un 409 puede significar
-    // caja cerrada O arqueo pendiente de una jornada anterior.
+    // caja cerrada, arqueo pendiente o stock insuficiente.
     if (error instanceof ArqueoPendienteError) {
       return res.status(error.status).json({ error: error.message, tipo: 'ARQUEO_PENDIENTE' });
     }
     if (error instanceof CajaCerradaError) {
       return res.status(error.status).json({ error: error.message, tipo: 'CAJA_CERRADA' });
     }
-    const status = typeof error?.status === 'number' ? error.status : 400;
+    if (error instanceof StockInsuficienteError) {
+      return res.status(error.status).json({ error: error.message, tipo: error.tipo });
+    }
+    const status =
+      typeof (error as { status?: number }).status === 'number'
+        ? (error as { status?: number }).status!
+        : 400;
     return res.status(status).json({
-      error: error.message || 'Error al procesar la venta',
-      ...(status === 409 ? { tipo: 'CAJA_CERRADA' } : {})
+      error: error instanceof Error ? error.message : 'Error al procesar la venta',
+      ...(status === 409 ? { tipo: 'CAJA_CERRADA' } : {}),
     });
   }
 };
@@ -483,7 +400,66 @@ export const reversarVenta = async (req: AuthRequest, res: Response) => {
     }
 
     const resultado = await prisma.$transaction(async (tx) => {
-      // A. Turno de caja abierto obligatorio.
+      // A. Bloqueo de la factura: evita dos reversiones concurrentes.
+      // El gatekeeper exterior es solo UX; la decisión definitiva ocurre
+      // dentro de la misma transacción sobre la fila bloqueada.
+      const facturaBloqueada = await tx.$queryRaw<Array<{ Factura_ID: number; Estatus: string }>>(Prisma.sql`
+        SELECT Factura_ID, Estatus
+        FROM facturas
+        WHERE Factura_ID = ${Number(id)}
+        FOR UPDATE
+      `);
+      if (facturaBloqueada.length === 0) {
+        throw new Error('La factura no existe');
+      }
+
+      const facturaOriginal = await tx.facturas.findUnique({
+        where: { Factura_ID: Number(id) },
+        include: { detalle_facturas: true, pagos: true },
+      });
+      if (!facturaOriginal) {
+        throw new Error('La factura no existe');
+      }
+      if (facturaOriginal.Estatus === 'Reversada') {
+        throw new Error('La factura ya fue reversada');
+      }
+      if (facturaOriginal.Estatus !== 'Pagada' && facturaOriginal.Estatus !== 'Completada') {
+        throw new Error(`La factura no es reversible (Estatus: ${facturaOriginal.Estatus})`);
+      }
+
+      // B. Bloqueo de inventario en el mismo orden que venta/entrada:
+      // productos por ID creciente y luego variantes por ID creciente.
+      // Esto evita que el CMP se calcule sobre una lectura concurrente vieja.
+      const productoIdsReversion = Array.from(
+        new Set(facturaOriginal.detalle_facturas.map((d) => d.Producto_ID)),
+      ).sort((a, b) => a - b);
+      const varianteIdsReversion = Array.from(
+        new Set(
+          facturaOriginal.detalle_facturas
+            .map((d) => d.Variante_ID)
+            .filter((v): v is number => v != null),
+        ),
+      ).sort((a, b) => a - b);
+
+      if (productoIdsReversion.length > 0) {
+        await tx.$queryRaw(Prisma.sql`
+          SELECT Producto_ID
+          FROM productos
+          WHERE Producto_ID IN (${Prisma.join(productoIdsReversion)})
+          FOR UPDATE
+        `);
+      }
+      if (varianteIdsReversion.length > 0) {
+        await tx.$queryRaw(Prisma.sql`
+          SELECT Variante_ID
+          FROM producto_variantes
+          WHERE Variante_ID IN (${Prisma.join(varianteIdsReversion)})
+          FOR UPDATE
+        `);
+      }
+
+      // C. Turno de caja abierto obligatorio, después del inventario para
+      // conservar el orden de bloqueo de los flujos financieros.
       const caja = await exigirCajaAbierta(tx);
 
       // Total a devolver de la GAVETA: solo los pagos hechos en efectivo
@@ -616,6 +592,13 @@ export const reversarVenta = async (req: AuthRequest, res: Response) => {
         detalle_facturas: { include: { productos: true, producto_variantes: { include: { atributos: true } } } }
       }
     });
+
+    // Broadcast a todos los terminales (la devolución altera inventario).
+    IoStore.emitDbUpdate(
+      'ventas',
+      `Venta #${id} reversada con Nota de Crédito`,
+      { facturaOriginalId: Number(id) },
+    );
 
     return res.status(201).json({
       message: 'Venta reversada correctamente',

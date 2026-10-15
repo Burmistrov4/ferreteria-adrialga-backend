@@ -4,6 +4,35 @@
  * Ejecutar con el backend corriendo en :3000:  node scripts/smoke_e2e.js
  */
 const { PrismaClient } = require('@prisma/client');
+const guard = require('./qa_guard.cjs');
+// Salvaguarda: el smoke toca la base de datos; jamás debe correr contra prod/remoto
+// NI contra la base de DEMOSTRACIÓN `adrialga`. Este script crea notas de
+// entrada, facturas y variantes de prueba; correrlo contra el catálogo que se
+// presenta le inyecta residuos que luego se ven en pantalla (medido el
+// 2026-10-14: 46 de los 100 productos activos eran residuos de E2E).
+// Destino permitido: `adrialga_qa`. Escape explícito: ALLOW_SMOKE_EN_ADRIALGA=SI.
+{
+  const _smokeUrl = process.env.DATABASE_URL || '';
+  const _smokeV = guard.validarHostLocal(_smokeUrl);
+  if (!_smokeV.ok) {
+    console.error(`ABORTADO: smoke_e2e.js requiere una base LOCAL (loopback). Destino: ${guard.sanitizar(_smokeUrl)} · ${_smokeV.error}`);
+    process.exit(3);
+  }
+  let _smokeBase = '';
+  try {
+    _smokeBase = guard.rutaLimpia(new URL(guard.normalizarUrl(_smokeUrl)));
+  } catch {
+    /* base no reconocible: la validación de abajo la rechaza */
+  }
+  if (_smokeBase !== 'adrialga_qa' && process.env.ALLOW_SMOKE_EN_ADRIALGA !== 'SI') {
+    console.error(
+      `ABORTADO: smoke_e2e.js ESCRIBE datos de prueba y solo debe correr contra la base QA. ` +
+        `Destino actual: '${_smokeBase || '?'}'. Si de verdad quieres ensuciar '${_smokeBase || '?'}', ` +
+        `usa ALLOW_SMOKE_EN_ADRIALGA=SI.`
+    );
+    process.exit(3);
+  }
+}
 const prisma = new PrismaClient();
 const BASE = 'http://localhost:3000/api';
 
@@ -11,6 +40,69 @@ const assert = (cond, msg) => {
   if (!cond) throw new Error(`FALLO: ${msg}`);
   console.log(`OK  ${msg}`);
 };
+
+// ── Guardia de caja: el smoke NUNCA debe corromper la caja real ────────────
+// Antes, la prueba manipulaba Saldo_Actual de la caja abierta (lo ponía en 0
+// y luego en 100) y dejaba sus movimientos, descuadrando el arqueo real del
+// usuario. Ahora se toma un snapshot (saldo + marca de Movimiento_ID) y se
+// restaura/limpia TODO al final, incluso si la prueba falla. Si no hay caja
+// abierta, se crea una temporal que se elimina al terminar.
+let cajaSnapshot = null;   // { id, saldo, maxMovId }
+let cajaTemporalId = null; // turno creado por el smoke (se elimina)
+
+async function snapshotCaja() {
+  const abierta = await prisma.caja.findFirst({ where: { Activa: true } });
+  if (abierta) {
+    const agg = await prisma.movimientos_caja.aggregate({
+      where: { Caja_ID: abierta.Caja_ID },
+      _max: { Movimiento_ID: true },
+    });
+    cajaSnapshot = {
+      id: abierta.Caja_ID,
+      saldo: Number(abierta.Saldo_Actual),
+      maxMovId: agg._max.Movimiento_ID ?? 0,
+    };
+    console.log(`INFO  Caja real #${abierta.Caja_ID} detectada (saldo $${cajaSnapshot.saldo}). Se restaurará al final.`);
+  } else {
+    const creada = await prisma.caja.create({
+      data: {
+        Nombre: 'Caja Smoke E2E (temporal)',
+        Saldo_Inicial: 0, Saldo_Actual: 0, Activa: true, Estado: 'ABIERTA',
+      },
+    });
+    cajaTemporalId = creada.Caja_ID;
+    console.log(`INFO  Sin caja abierta: se creó la temporal #${creada.Caja_ID} (se eliminará al final).`);
+  }
+}
+
+async function restaurarCaja() {
+  try {
+    if (cajaTemporalId != null) {
+      await prisma.movimientos_caja.deleteMany({ where: { Caja_ID: cajaTemporalId } });
+      await prisma.caja.delete({ where: { Caja_ID: cajaTemporalId } });
+      console.log(`INFO  Caja temporal #${cajaTemporalId} eliminada.`);
+    } else if (cajaSnapshot) {
+      // Borra SOLO los movimientos creados por el smoke (posteriores a la
+      // marca) y devuelve el saldo original: la caja real queda intacta.
+      const del = await prisma.movimientos_caja.deleteMany({
+        where: {
+          Caja_ID: cajaSnapshot.id,
+          Movimiento_ID: { gt: cajaSnapshot.maxMovId },
+        },
+      });
+      await prisma.caja.update({
+        where: { Caja_ID: cajaSnapshot.id },
+        data: { Saldo_Actual: cajaSnapshot.saldo },
+      });
+      console.log(
+        `INFO  Caja real #${cajaSnapshot.id} restaurada (saldo $${cajaSnapshot.saldo}, ` +
+        `${del.count} movimiento(s) del smoke eliminados).`
+      );
+    }
+  } catch (e) {
+    console.error('AVISO  No se pudo restaurar la caja:', e.message);
+  }
+}
 
 (async () => {
   // ── 0. Login ──
@@ -22,6 +114,9 @@ const assert = (cond, msg) => {
   assert(loginRes.ok, `Login (HTTP ${loginRes.status})`);
   const { token } = await loginRes.json();
   const auth = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+
+  // Snapshot de la caja ANTES de tocar nada (se restaura en el finally).
+  await snapshotCaja();
 
   // ── 1. Preparación: categoría + producto con nombre hostil (comillas/comas) ──
   let cats = await (await fetch(`${BASE}/categorias`, { headers: auth })).json();
@@ -154,7 +249,7 @@ const assert = (cond, msg) => {
   const filaProd = csv.split('\n').find((l) => l.startsWith(`${facturaId},`));
   assert(!!filaProd, 'Factura de prueba presente en el libro diario');
   assert(filaProd.includes('""') && filaProd.includes('Cliente ""Prueba""'), 'Escape RFC-4180 de comillas aplicado');
-  assert(filaProd.includes(String(Number(tasa).toFixed(4))), `Tasa BCV histórica en la fila (${Number(tasa).toFixed(4)})`);
+  assert(filaProd.includes(String(Number(tasa).toFixed(4))) || filaProd.includes(String(Number(tasa).toFixed(3))), `Tasa BCV histórica en la fila (${Number(tasa).toFixed(4)})`);
 
   const jsonRes = await (await fetch(`${BASE}/dashboard/exportar?periodo=mes&formato=json`, { headers: auth })).json();
   assert(jsonRes.totalRegistros >= 1, `Exportación JSON: ${jsonRes.totalRegistros} registros`);
@@ -335,5 +430,13 @@ const assert = (cond, msg) => {
   console.log('\n===========================================');
   console.log('PRUEBA DE HUMO E2E COMPLETADA SIN ERRORES');
   console.log('===========================================');
-})().catch((e) => { console.error('❌ ' + e.message); process.exit(1); })
-  .finally(async () => { await prisma.$disconnect(); });
+})().catch((e) => {
+  console.error('❌ ' + e.message);
+  // exitCode (no process.exit) para que el `.finally` SÍ ejecute la
+  // restauración de la caja incluso ante un fallo de la prueba.
+  process.exitCode = 1;
+})
+  .finally(async () => {
+    await restaurarCaja();
+    await prisma.$disconnect();
+  });

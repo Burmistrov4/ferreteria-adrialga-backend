@@ -10,13 +10,18 @@ datasource db {
 model categorias {
   Categoria_ID   Int         @id @default(autoincrement())
   Nombre         String      @db.VarChar(100)
-  Prefijo_SKU    String      @default("GEN") @db.VarChar(3)
+  Prefijo_SKU    String      @default("GEN") @db.VarChar(30)
   // Margen sugerido en % por defecto para productos nuevos de la categoría
   // (raíz de la cascada: Variante → Producto → Categoría).
   Margen_Sugerido Decimal?   @db.Decimal(18, 6)
   Descripcion    String?     @db.VarChar(255)
   Activo         Boolean     @default(true)
   Fecha_Registro DateTime    @default(now()) @db.Timestamp(0)
+  // ── B1: jerarquía auto-referencial (subcategorías, N niveles) ──
+  // null = categoría raíz. El producto.Categoria_ID apunta siempre a la HOJA.
+  Categoria_Padre_ID Int?
+  padre              categorias? @relation("CatHijas", fields: [Categoria_Padre_ID], references: [Categoria_ID], map: "FK_Cat_Padre")
+  hijas              categorias[] @relation("CatHijas")
   productos      productos[]
 }
 
@@ -59,9 +64,19 @@ model productos {
   /// Precio_Venta = Costo_Ultimo * (1 + Margen_Ganancia/100) cuando ambos se envían.
   Margen_Ganancia       Decimal                 @default(0.0000) @db.Decimal(18, 6)
   /// Último costo de compra registrado (base del cálculo de precio sugerido).
-  Costo_Ultimo          Decimal                 @default(0.0000) @db.Decimal(18, 6)
+  Costo_Ultimo           Decimal                 @default(0.0000) @db.Decimal(18, 6)
+  /// URL opcional de imagen (para previsualización en POS y tickets).
+  Imagen_URL             String?                 @db.VarChar(500)
   Stock_Actual          Int                     @default(0)
   Stock_Minimo          Int                     @default(5)
+  // ── B1: trazabilidad del catálogo EPA (scraper) ──
+  // Código único del proveedor EPA (ej. VE-1003591). Clave de upsert idempotente.
+  Codigo_EPA            String?                 @db.VarChar(50) @unique(map: "UQ_Codigo_EPA")
+  // Marca/fabricante extraída del JSON-LD (ej. "Inca", "Duncan").
+  Marca                 String?                 @db.VarChar(100)
+  // Precio base de referencia en USD (JSON-LD price). El TPV convierte a Bs
+  // dinámicamente con la tasa BCV activa (tasas_bcv).
+  Precio_Ref_USD        Decimal?                @db.Decimal(18, 6)
   Categoria_ID          Int
   Activo                Boolean                 @default(true)
   Fecha_Registro        DateTime                @default(now()) @db.Timestamp(0)
@@ -89,6 +104,8 @@ model usuarios {
   facturas              facturas[]
   notas_entrega_entrada notas_entrega_entrada[]
   autorizaciones        facturas[] @relation("AutorizadoPor")
+  caja                  caja[]
+  movimientos_caja      movimientos_caja[]
 
   @@index([Rol], map: "IDX_Usuarios_Rol")
 }
@@ -154,6 +171,11 @@ model notas_entrega_entrada {
   Estatus               String                  @default("Procesada") @db.VarChar(20)
   Proveedor_ID          Int
   Usuario_ID            Int
+  // A-017: rastro de anulación/reversa (no destructiva). La nota original se
+  // conserva; solo se marca Estatus='Anulada' y se registra quién/por qué.
+  Anulada_Por           Int?
+  Fecha_Anulacion       DateTime?               @db.Timestamp(0)
+  Motivo_Anulacion      String?                 @db.VarChar(200)
   detalle_notas_entrega detalle_notas_entrega[]
   proveedores           proveedores             @relation(fields: [Proveedor_ID], references: [Proveedor_ID], map: "FK_Notas_Proveedores")
   usuarios              usuarios                @relation(fields: [Usuario_ID], references: [Usuario_ID], map: "FK_Notas_Usuarios")
@@ -168,14 +190,20 @@ model detalle_notas_entrega {
   Detalle_Nota_ID       Int                   @id @default(autoincrement())
   Nota_ID               Int
   Producto_ID           Int
+  Variante_ID           Int?
   Cantidad              Int
   Costo_Unitario        Decimal               @default(0.0000) @db.Decimal(18, 6)
   Subtotal_Costo        Decimal?              @db.Decimal(18, 6)
   notas_entrega_entrada notas_entrega_entrada @relation(fields: [Nota_ID], references: [Nota_ID], onDelete: Cascade, map: "FK_DetalleNota_Cabecera")
   productos             productos             @relation(fields: [Producto_ID], references: [Producto_ID], map: "FK_DetalleNota_Productos")
+  // Trazabilidad de variante (A-016): la compra ya actualizaba stock/costo de
+  // la variante, pero el detalle no lo conservaba. Opcional + onDelete SetNull
+  // para preservar el histórico de compras aunque la variante sea eliminada.
+  producto_variantes     producto_variantes?   @relation(fields: [Variante_ID], references: [Variante_ID], onDelete: SetNull, map: "FK_DetalleNota_Variante")
 
   @@index([Nota_ID], map: "FK_DetalleNota_Cabecera")
   @@index([Producto_ID], map: "IDX_DetalleNotas_Producto")
+  @@index([Variante_ID], map: "IDX_DetalleNotas_Variante")
 }
 
 model pagos {
@@ -204,7 +232,11 @@ model caja {
   Estado         String            @default("ABIERTA") @db.VarChar(20)
   Fecha_Cierre   DateTime?         @db.Timestamp(0)
   Activa         Boolean           @default(true)
+  // Cajero que abrió el turno (trazabilidad). NULL si el usuario fue removido
+  // (onDelete SetNull → los JOIN son seguros aunque falte el usuario).
+  Usuario_ID     Int?
   movimientos    movimientos_caja[]
+  usuarios       usuarios?         @relation(fields: [Usuario_ID], references: [Usuario_ID], onDelete: SetNull, map: "FK_Caja_Usuarios")
 
   @@index([Activa], map: "IDX_Caja_Activa")
 }
@@ -223,7 +255,10 @@ model movimientos_caja {
   Origen_ID     Int?
   Origen_Tipo   String?  @db.VarChar(20) // factura | nota | manual
   Fecha         DateTime @default(now()) @db.Timestamp(0)
+  // Usuario que registró el movimiento (trazabilidad). NULL si fue removido.
+  Usuario_ID    Int?
   caja          caja     @relation(fields: [Caja_ID], references: [Caja_ID], map: "FK_MovCaja_Caja")
+  usuarios      usuarios? @relation(fields: [Usuario_ID], references: [Usuario_ID], onDelete: SetNull, map: "FK_MovCaja_Usuarios")
 
   @@index([Caja_ID], map: "FK_MovCaja_Caja")
   @@index([Origen_Tipo, Origen_ID], map: "IDX_MovCaja_Origen")
@@ -267,6 +302,7 @@ model producto_variantes {
   productos      productos           @relation(fields: [Producto_ID], references: [Producto_ID], map: "FK_Variantes_Producto")
   atributos      variante_atributos[]
   detalle_facturas detalle_facturas[]
+  detalle_notas_entrega detalle_notas_entrega[]
 
   @@index([Producto_ID], map: "IDX_Variantes_Producto")
 }

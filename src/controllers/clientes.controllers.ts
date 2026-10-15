@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/db';
+import { IoStore } from '../utils/socket';
+import { responderErrorPrisma } from '../utils/errores';
 
 // ── Normalización de documento ───────────────────────────────────────────────
 // Sincronización bidireccional entre RIF_Cedula y el par Tipo_Documento /
@@ -65,7 +67,10 @@ export const getClientes = async (req: Request, res: Response) => {
     });
     res.json(clientes);
   } catch (error) {
-    res.status(500).json({ message: 'Error al obtener clientes', error });
+    return responderErrorPrisma(res, error, {
+      recurso: 'cliente',
+      contexto: 'obtener los',
+    });
   }
 };
 
@@ -87,7 +92,10 @@ export const buscarClientePorDocumento = async (req: Request, res: Response) => 
 
     return res.json(clientes);
   } catch (error) {
-    return res.status(500).json({ message: 'Error al buscar cliente', error });
+    return responderErrorPrisma(res, error, {
+      recurso: 'cliente',
+      contexto: 'buscar el',
+    });
   }
 };
 
@@ -110,14 +118,18 @@ export const updateCliente = async (req: Request, res: Response) => {
       }
     });
 
+    IoStore.emitDbUpdate('clientes', `Cliente actualizado: ${clienteActualizado.Razon_Social}`, { clienteId: clienteActualizado.Cliente_ID });
     res.json(clienteActualizado);
-  } catch (error: any) {
-    if (error?.code === 'P2002') {
-      return res.status(409).json({
-        message: 'Ya existe otro cliente con ese RIF/Cédula'
-      });
+  } catch (error: unknown) {
+    const msg = 'Ya existe otro cliente con ese RIF/Cédula';
+    if ((error as any)?.code === 'P2002') {
+      return res.status(409).json({ success: false, code: 'DUPLICADO', message: msg, error: msg });
     }
-    res.status(500).json({ message: 'Error al actualizar el cliente', error });
+    // P2025 -> 404 (cliente inexistente) en vez de 500.
+    return responderErrorPrisma(res, error, {
+      recurso: 'cliente',
+      contexto: 'actualizar el',
+    });
   }
 };
 
@@ -127,14 +139,17 @@ export const deleteCliente = async (req: Request, res: Response) => {
     await prisma.clientes.delete({
       where: { Cliente_ID: Number(id) }
     });
+    IoStore.emitDbUpdate('clientes', 'Cliente eliminado', { clienteId: Number(id) });
     res.json({ message: 'Cliente eliminado correctamente' });
-  } catch (error: any) {
-    if (error?.code === 'P2003') {
-      return res.status(409).json({
-        message: 'No se puede eliminar: el cliente tiene facturas asociadas'
-      });
+  } catch (error: unknown) {
+    const msg = 'No se puede eliminar: el cliente tiene facturas asociadas';
+    if ((error as any)?.code === 'P2003') {
+      return res.status(409).json({ success: false, code: 'FK_INVALIDA', message: msg, error: msg });
     }
-    res.status(500).json({ message: 'Error al eliminar el cliente', error });
+    return responderErrorPrisma(res, error, {
+      recurso: 'cliente',
+      contexto: 'eliminar el',
+    });
   }
 };
 
@@ -159,13 +174,16 @@ export const createCliente = async (req: Request, res: Response) => {
       }
     });
 
+    IoStore.emitDbUpdate('clientes', `Cliente registrado: ${nuevoCliente.Razon_Social}`, { clienteId: nuevoCliente.Cliente_ID });
     res.status(201).json(nuevoCliente);
-  } catch (error: any) {
-    if (error?.code === 'P2002') {
-      return res.status(409).json({
-        message: `Ya existe un cliente registrado con el documento ${error?.meta?.target ?? ''}`.trim()
-      });
+  } catch (error: unknown) {
+    const msg = 'Ya existe un cliente registrado con ese documento';
+    if ((error as any)?.code === 'P2002') {
+      return res.status(409).json({ success: false, code: 'DUPLICADO', message: msg, error: msg });
     }
-    res.status(500).json({ message: 'Error al registrar el cliente', error });
+    return responderErrorPrisma(res, error, {
+      recurso: 'cliente',
+      contexto: 'registrar el',
+    });
   }
 };

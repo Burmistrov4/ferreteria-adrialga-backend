@@ -1,0 +1,467 @@
+{
+  "generadoEn": "2026-10-15T05:47:15.319Z",
+  "origen": "C:\\Users\\Loro\\Desktop\\Cuarto Semestre\\3. Analisis de Sistemas II\\Adrialga_Sistema_Renovado\\adrialga-backend\\public\\productos",
+  "destino": "C:\\Users\\Loro\\Desktop\\Cuarto Semestre\\3. Analisis de Sistemas II\\Adrialga_Sistema_Renovado\\adrialga-backend\\public\\productos_deploy",
+  "archivos": 91,
+  "bytes": 2303896,
+  "productosActivos": 100,
+  "productosCitadosEnDocumentos": 58,
+  "sinArchivoEnDisco": 0,
+  "detalle": [
+    {
+      "archivo": "VE-0208214.webp",
+      "sku": "PINTU-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0223013.webp",
+      "sku": "ANT-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0226093.webp",
+      "sku": "PINT-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0240034.webp",
+      "sku": "SILI-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0243064.webp",
+      "sku": "MAST-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0250092.webp",
+      "sku": "REV-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0257057.webp",
+      "sku": "PINTUR-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0414045.webp",
+      "sku": "TUBOS-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0415047.webp",
+      "sku": "ACCESORIOS-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0490789.webp",
+      "sku": "ADO-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0494180.webp",
+      "sku": "LUC-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0626463.webp",
+      "sku": "ALI-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0636094.webp",
+      "sku": "SILL-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0679016.webp",
+      "sku": "ACCESORIOSPI-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0714243.webp",
+      "sku": "LIQUIDO-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0720191.webp",
+      "sku": "LIQUIDOS-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0818604.webp",
+      "sku": "MAC-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0842031.webp",
+      "sku": "CONTR-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0874001.webp",
+      "sku": "VALV-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0878021.webp",
+      "sku": "MANG-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0934008.webp",
+      "sku": "REPI-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-0935002.webp",
+      "sku": "PIEDE-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1001029.webp",
+      "sku": "ADI-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1004019.webp",
+      "sku": "HERR-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1017027.webp",
+      "sku": "AMB-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1218088.webp",
+      "sku": "DADO-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1226180.webp",
+      "sku": "LLAV-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1238086.webp",
+      "sku": "DESTO-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1424244.webp",
+      "sku": "BROC-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1427003.webp",
+      "sku": "BROCA-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1441196.webp",
+      "sku": "LIJA-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1502737.webp",
+      "sku": "LAMPA-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1510256.webp",
+      "sku": "SOB-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1514536.webp",
+      "sku": "PLAFO-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1515025.webp",
+      "sku": "BOMBIL-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1520277.webp",
+      "sku": "APL-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1548165.webp",
+      "sku": "VENTIL-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1550239.webp",
+      "sku": "REF-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1570096.webp",
+      "sku": "EMPO-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1579586.webp",
+      "sku": "BOMBILL-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1612028.webp",
+      "sku": "ENC-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1620022.webp",
+      "sku": "INT-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1622015.webp",
+      "sku": "LINE-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1642209.webp",
+      "sku": "TOM-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1654037.webp",
+      "sku": "LINEAP-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1662145.webp",
+      "sku": "SOC-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1669010.webp",
+      "sku": "LIN-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1802113.webp",
+      "sku": "CUER-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1810097.webp",
+      "sku": "CAD-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1816178.webp",
+      "sku": "ACCESORIOSCA-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1844347.webp",
+      "sku": "RUE-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1850496.webp",
+      "sku": "TORNIL-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1854087.webp",
+      "sku": "TORN-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1870005.webp",
+      "sku": "RAMP-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1903305.webp",
+      "sku": "CANDA-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1921070.webp",
+      "sku": "MANI-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1924157.webp",
+      "sku": "POM-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-1957304.webp",
+      "sku": "BIS-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2107000.webp",
+      "sku": "PUERT-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2208199.webp",
+      "sku": "CERA-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2234084.webp",
+      "sku": "RODAP-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2259015.webp",
+      "sku": "PANE-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2410182.webp",
+      "sku": "GRIF-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2413226.webp",
+      "sku": "COR-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2415515.webp",
+      "sku": "DUC-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2424586.webp",
+      "sku": "GRIFE-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2460082.webp",
+      "sku": "MUE-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2479001.webp",
+      "sku": "ESPEJ-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2517258.webp",
+      "sku": "GRIFERI-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2526042.webp",
+      "sku": "FREG-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2549205.webp",
+      "sku": "UTE-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2610061.webp",
+      "sku": "ACCESORIOSHG-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2614051.webp",
+      "sku": "TUBOSH-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2620481.webp",
+      "sku": "DESA-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2622091.webp",
+      "sku": "TUBOSP-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2646002.webp",
+      "sku": "KITP-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2689005.webp",
+      "sku": "ACCESORIOSPV-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2719192.webp",
+      "sku": "PILAS-2026-0019",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2740274.webp",
+      "sku": "CALZA-2026-0012",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2776070.webp",
+      "sku": "SENA-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2804003.webp",
+      "sku": "BREAK-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2824211.webp",
+      "sku": "CABLES-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2833134.webp",
+      "sku": "ACCESORIOSE-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-2837025.webp",
+      "sku": "ACCESORIOSP-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-3029008.webp",
+      "sku": "CON-2026-0004",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-3037253.webp",
+      "sku": "IMPER-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-3050091.webp",
+      "sku": "MAL-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-3302168.webp",
+      "sku": "CHO-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-3305130.webp",
+      "sku": "SNA-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-3305448.webp",
+      "sku": "GAL-2026-0001",
+      "motivo": "activo"
+    },
+    {
+      "archivo": "VE-3310065.webp",
+      "sku": "GAS-2026-0001",
+      "motivo": "activo"
+    }
+  ]
+}

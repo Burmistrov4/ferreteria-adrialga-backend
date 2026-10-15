@@ -1,5 +1,33 @@
-import { prisma } from './config/db';
-import { hashPassword } from './utils/password.util';
+// Salvaguarda de destino (ADR-002/007) ANTES de cargar la conexión Prisma:
+// por defecto el seed SOLO corre contra loopback. En un despliegue real a un
+// destino remoto se debe pasar ALLOW_REMOTE_SEED=1 explícitamente (documentado).
+/* eslint-disable @typescript-eslint/no-var-requires */
+require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+const guard = require('../scripts/qa_guard.cjs');
+const _seedUrl = process.env.DATABASE_URL ?? '';
+const _seedParsed = guard.parsear(_seedUrl);
+if (!_seedParsed) {
+  console.error('✖ ABORTADO: DATABASE_URL ausente o malformada (sin escape posible).');
+  process.exit(3);
+}
+if (!guard.ALLOWED_PROTOCOLS.includes((_seedParsed.protocol || '').toLowerCase())) {
+  console.error(`✖ ABORTADO: protocolo no permitido (${_seedParsed.protocol}).`);
+  process.exit(3);
+}
+const _seedRemoto = !guard.LOOPBACK_CANON[guard.extraerHost(_seedParsed)];
+if (_seedRemoto && !process.env.ALLOW_REMOTE_SEED) {
+  console.error(
+    `✖ ABORTADO: el seed solo corre contra una base local (${guard.sanitizar(_seedUrl)}): host no loopback\n` +
+      '  Si estás sembrando producción a propósito, define ALLOW_REMOTE_SEED=1.',
+  );
+  process.exit(3);
+}
+if (_seedRemoto) {
+  console.warn('⚠ ALLOW_REMOTE_SEED=1: sembrando una base NO local bajo tu responsabilidad.');
+}
+const { prisma } = require('./config/db');
+const { hashPassword } = require('./utils/password.util');
+/* eslint-enable @typescript-eslint/no-var-requires */
 
 async function main() {
   const hashedPassword = await hashPassword('admin123');

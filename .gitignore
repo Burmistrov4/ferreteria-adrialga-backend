@@ -25,3 +25,25 @@ yarn-error.log*
 .vscode/
 .idea/
 .DS_Store
+
+# Entornos virtuales de Python (hay un venv local de 15 MB para scripts de
+# auditoría; no debe versionarse)
+venv/
+.venv/
+
+# Catálogo COMPLETO de imágenes de producto (~177 MB, 7.211 archivos).
+# NO versionar: un `git add .` subiría 177 MB a GitHub. Solo se despliega el
+# subconjunto que el sistema puede mostrar (91 archivos, 2,2 MB), que genera
+# `npm run imagenes:deploy` en public/productos_deploy/.
+# Ver doc/guia/DESPLIEGUE_PRODUCCION.md.
+public/productos/
+
+# Volcados de base de datos: NUNCA versionar.
+# Este repositorio es PUBLICO y los volcados contienen la tabla `usuarios`
+# completa, con los hashes bcrypt reales (columna `Password`) y datos de
+# clientes y proveedores. Publicarlos expondria las contrasenas a un ataque
+# de fuerza bruta offline. El respaldo vive fuera de Git; para aprovisionar
+# una base nueva se usa deploy/provisionar_adrialga.sql (fuera de este repo).
+backups/
+backup_railway.sql
+*.dump.sql
