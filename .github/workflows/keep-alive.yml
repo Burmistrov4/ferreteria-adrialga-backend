@@ -1,0 +1,47 @@
+name: Keep-alive del backend
+
+# Por qué existe: los servicios gratuitos se duermen/apagan cuando nadie los usa.
+#   - Render (free) duerme el web service a los 15 minutos sin tráfico: el primer
+#     clic de la demo tarda ~40 s o parece caído.
+#   - Aiven (free) puede APAGAR la base por inactividad, y al apagarla borra su
+#     registro DNS (medido el 2026-10-16: NXDOMAIN + backend 503). Un ping
+#     periódico cuenta como actividad real.
+#
+# /api/health ejecuta un `SELECT 1` contra MySQL, así que un solo ping mantiene
+# despiertos a los dos. Se usa cada 10 minutos para tener margen sobre el umbral
+# de 15 minutos de Render (el cron de GitHub puede retrasarse unos minutos).
+#
+# Este keep-alive NO sustituye al checklist del día: antes de la exposición se
+# abre /api/health a mano (ver doc/RUNBOOK_PRESENTACION.md).
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  despertar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping a /api/health
+        run: |
+          URL="https://ferreteria-adrialga-backend.onrender.com/api/health"
+          # --max-time 90: un servicio dormido puede tardar en despertar.
+          codigo=$(curl -s -o cuerpo.json -w '%{http_code}' --max-time 90 "$URL") || {
+            echo "::error::No se pudo contactar al backend (red o servicio caído)."
+            exit 1
+          }
+          echo "HTTP $codigo"
+          cat cuerpo.json
+          echo
+          if [ "$codigo" = "200" ]; then
+            echo "Backend despierto y base de datos conectada."
+          else
+            # 503 = el proceso vive pero la base no responde (p. ej. Aiven apagado).
+            # No se marca el run como fallido para no llenar de rojos el historial;
+            # queda como advertencia visible en el resumen.
+            echo "::warning::El backend respondió HTTP $codigo: revisar la base de datos (Aiven)."
+          fi
