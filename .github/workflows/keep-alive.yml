@@ -16,7 +16,12 @@ name: Keep-alive del backend
 
 on:
   schedule:
+    # El cron de GitHub es "best-effort": bajo carga se retrasa y puede saltarse
+    # una ejecución (medido: el horario de las 20:00 UTC no disparó a las 20:06).
+    # Dos horarios desfasados dejan el intervalo efectivo en ~4-10 minutos, con
+    # margen sobre el umbral de 15 minutos de Render.
     - cron: '*/10 * * * *'
+    - cron: '4,14,24,34,44,54 * * * *'
   workflow_dispatch:
 
 permissions:
