@@ -255,6 +255,11 @@ export const createFactura = async (req: AuthRequest, res: Response) => {
   }
   const tasaHistorica = aDecimal(tasaD4);
 
+  // Vuelto que el POS entrega al cliente (en USD). Sale de la gaveta: el motor
+  // lo descuenta del efectivo neto y registra su EGRESO para que el arqueo
+  // cuadre. Se normaliza a número y se ignora cualquier valor no numérico.
+  const vueltoUSD = Number(req.body.Vuelto_USD ?? 0) || 0;
+
   // Normalización de pagos a bigint D4, con marca de divisa resuelta por el motor.
   const pagosNormalizados: PagoMixtoEntrada[] = [
     { metodo: 'Efectivo USD', monto: toD4(dp.efectivoUSD), esDivisa: esDivisaMetodo('Efectivo USD') },
@@ -290,6 +295,7 @@ export const createFactura = async (req: AuthRequest, res: Response) => {
           desglose,
           tasaHistorica,
           referenciaPago,
+          vueltoUSD,
         }),
     );
 

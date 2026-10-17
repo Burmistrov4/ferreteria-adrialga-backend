@@ -94,6 +94,8 @@ export interface SolicitudVenta {
   desglose: DesgloseFiscal;
   tasaHistorica: string; // aDecimal(tasaD4) — Decimal(18,6)
   referenciaPago: string | null;
+  /** Vuelto entregado al cliente, en USD. Sale físicamente de la gaveta. */
+  vueltoUSD?: number;
 }
 
 // ── Tipos de las lecturas con cerrojo (SELECT ... FOR UPDATE) ─────────────────
@@ -308,20 +310,38 @@ export async function registrarPagosMixtos(
     pagos: PagoMixtoEntrada[];
     tasaHistorica: string;
     referenciaPago: string | null;
+    /** Vuelto entregado al cliente, en USD. Sale físicamente de la gaveta. */
+    vueltoUSD?: number;
   },
 ): Promise<void> {
   if (params.pagos.length === 0) return; // sin cobro, sin impacto de caja
 
   const caja = await exigirCajaAbierta(tx);
 
-  const sumaEfectivo = params.pagos
-    .filter((p) => esEfectivo(p.metodo))
-    .reduce((acc, p) => addD4(acc, p.monto), 0n);
+  // ── Moneda y vuelto: lo que entra a la gaveta es USD NETO ──────────────
+  // `Saldo_Actual` está en USD. Antes se sumaba `p.monto` tal cual: un pago
+  // en "Efectivo VES" metía BOLÍVARES como si fueran dólares (una venta de
+  // Bs 3.600 inflaba la gaveta en 3.600 "USD"). Además se acreditaba el
+  // efectivo BRUTO y el vuelto entregado al cliente nunca salía de la caja.
+  // Ahora cada pago efectivo se convierte a USD (los no-divisa se dividen por
+  // la tasa histórica) y se descuenta el vuelto antes de incrementar.
+  const tasaD4 = toD4(params.tasaHistorica);
+  const aUsd = (p: PagoMixtoEntrada): bigint =>
+    p.esDivisa ? p.monto : divD4(p.monto, tasaD4);
 
-  if (sumaEfectivo > 0n) {
+  const sumaEfectivoUSD = params.pagos
+    .filter((p) => esEfectivo(p.metodo))
+    .reduce((acc, p) => addD4(acc, aUsd(p)), 0n);
+
+  const vueltoD4 = toD4(params.vueltoUSD ?? 0);
+  const vueltoAplicado =
+    vueltoD4 > sumaEfectivoUSD ? sumaEfectivoUSD : vueltoD4;
+  const netoEfectivoUSD = sumaEfectivoUSD - vueltoAplicado;
+
+  if (netoEfectivoUSD > 0n) {
     await tx.caja.update({
       where: { Caja_ID: caja.Caja_ID },
-      data: { Saldo_Actual: { increment: aDecimal(sumaEfectivo) } },
+      data: { Saldo_Actual: { increment: aDecimal(netoEfectivoUSD) } },
     });
   }
 
@@ -332,7 +352,25 @@ export async function registrarPagosMixtos(
         Tipo: 'INGRESO',
         Concepto: `Cobro factura #${params.facturaId} (${params.numeroControl})`,
         Metodo_Pago: p.metodo,
-        Monto_USD: aDecimal(p.monto),
+        Monto_USD: aDecimal(aUsd(p)),
+        Tasa_Cambio: params.tasaHistorica,
+        Referencia: params.referenciaPago,
+        Origen_Tipo: 'factura',
+        Origen_ID: params.facturaId,
+      },
+    });
+  }
+
+  // El vuelto es un EGRESO real de la gaveta: se deja rastro explícito para
+  // que el arqueo cuadre (ingreso bruto − vuelto = neto acreditado).
+  if (vueltoAplicado > 0n) {
+    await tx.movimientos_caja.create({
+      data: {
+        Caja_ID: caja.Caja_ID,
+        Tipo: 'EGRESO',
+        Concepto: `Vuelto factura #${params.facturaId} (${params.numeroControl})`,
+        Metodo_Pago: 'Efectivo USD',
+        Monto_USD: aDecimal(vueltoAplicado),
         Tasa_Cambio: params.tasaHistorica,
         Referencia: params.referenciaPago,
         Origen_Tipo: 'factura',
@@ -409,6 +447,7 @@ export async function procesarVenta(
     pagos: solicitud.pagos,
     tasaHistorica: solicitud.tasaHistorica,
     referenciaPago: solicitud.referenciaPago,
+    vueltoUSD: solicitud.vueltoUSD,
   });
 
   return {

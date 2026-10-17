@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { exigirCajaAbierta, asegurarCajaPrincipal } from '../utils/caja';
+import { exigirCajaAbierta, asegurarCajaPrincipal, esEfectivo } from '../utils/caja';
 import { toD4, mulD4, divD4, aDecimal } from '../utils/dinero';
 
 const prisma = new PrismaClient();
@@ -96,13 +96,17 @@ export const TesoreriaService = {
       // Nunca se permite que un abono deje la gaveta en negativo: el montante
       // debe estar cubierto por el saldo disponible en caja. El supervisor
       // debe inyectar fondo (Ingreso de Caja) antes de abonar.
-      const saldoCajaD4 = toD4(caja.Saldo_Actual);
-      if (montoD4 > saldoCajaD4) {
-        throw new Error(
-          `SALDO_INSUFICIENTE:El abono de $${aDecimal(montoD4)} excede el saldo ` +
-          `disponible en caja ($${aDecimal(saldoCajaD4)}). Inyecte un Ingreso ` +
-          `de Caja (supervisor) antes de abonar, o reduzca el monto.`
-        );
+      // La regla anti-déficit solo aplica si el abono SALE de la gaveta. Un
+      // abono por transferencia/banco no toca el efectivo físico.
+      if (esEfectivo(metodoPago)) {
+        const saldoCajaD4 = toD4(caja.Saldo_Actual);
+        if (montoD4 > saldoCajaD4) {
+          throw new Error(
+            `SALDO_INSUFICIENTE:El abono de $${aDecimal(montoD4)} excede el saldo ` +
+            `disponible en caja ($${aDecimal(saldoCajaD4)}). Inyecte un Ingreso ` +
+            `de Caja (supervisor) antes de abonar, o reduzca el monto.`
+          );
+        }
       }
 
       // ── Abono ATÓMICO (anti-carrera) ────────────────────────────────────
@@ -145,10 +149,15 @@ export const TesoreriaService = {
         },
       });
 
-      await tx.caja.update({
-        where: { Caja_ID: caja.Caja_ID },
-        data: { Saldo_Actual: { decrement: aDecimal(montoD4) } },
-      });
+      // Solo el efectivo físico sale de la gaveta. Un abono bancario se audita
+      // en movimientos_caja pero NO reduce el arqueo (antes restaba caja por un
+      // pago que nunca salió del cajón → faltante fantasma).
+      if (esEfectivo(metodoPago)) {
+        await tx.caja.update({
+          where: { Caja_ID: caja.Caja_ID },
+          data: { Saldo_Actual: { decrement: aDecimal(montoD4) } },
+        });
+      }
 
       return cxpActualizada;
     });
