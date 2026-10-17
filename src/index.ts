@@ -121,6 +121,13 @@ app.use((req, res, next) => {
   })(req, res, next);
 });
 
+// ── Proxy inverso: Render (y cualquier PaaS) termina TLS delante del proceso.
+// Sin esto, `req.ip` es SIEMPRE la IP del proxy y el rate limit "por IP" se
+// vuelve un límite GLOBAL: un atacante agota el bucket del login y deja fuera a
+// todos los usuarios. `1` = confiar en el primer proxy de la plataforma.
+// Medido el 2026-10-16.
+app.set('trust proxy', 1);
+
 // ── Rate limiting global: uso intensivo durante toda la jornada y varios dispositivos LAN ──
 // Flutter Web consulta varios módulos y los equipos de una LAN pueden compartir IP.
 // Este límite alto evita bloquear el uso normal; no sustituye el diagnóstico de bucles
@@ -135,9 +142,12 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 // ── Rate limiting estricto para auth (prevenir fuerza bruta) ──
+// Con `trust proxy` activo, el límite ya es por IP real (antes era global y un
+// atacante podía bloquear el login de todos). 30 permite el uso normal de una
+// LAN compartida sin abrir la puerta a la fuerza bruta.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: 30,
   message: { error: 'Demasiados intentos de inicio de sesión. Intenta en 15 minutos.' },
 });
 app.use('/api/auth/login', authLimiter);

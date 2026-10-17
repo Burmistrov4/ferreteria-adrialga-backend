@@ -27,10 +27,28 @@ if (_seedRemoto) {
 }
 const { prisma } = require('./config/db');
 const { hashPassword } = require('./utils/password.util');
+const { randomBytes } = require('node:crypto');
 /* eslint-enable @typescript-eslint/no-var-requires */
 
+/**
+ * Credenciales del seed NUNCA hardcodeadas: este repositorio es PÚBLICO.
+ * Se leen del entorno; si no están definidas se genera una aleatoria y se
+ * muestra UNA sola vez por consola para que el operador la guarde.
+ */
+function credencialSeed(varEnv: string, generador: () => string): string {
+  const valor = process.env[varEnv];
+  if (valor && valor.length > 0) return valor;
+  const generada = generador();
+  console.warn(`⚠ ${varEnv} no definida: se generó una credencial aleatoria → ${generada}`);
+  return generada;
+}
+
 async function main() {
-  const hashedPassword = await hashPassword('admin123');
+  const adminPassword = credencialSeed(
+    'SEED_ADMIN_PASSWORD',
+    () => randomBytes(12).toString('base64url'),
+  );
+  const hashedPassword = await hashPassword(adminPassword);
 
   const usuario = await prisma.usuarios.upsert({
     where: { Credencial: 'admin' },
@@ -50,8 +68,16 @@ async function main() {
 
   // SUPERVISOR por defecto con PIN de operación (autorización de reversiones).
   // El PIN se persiste SOLO como hash bcrypt: nunca en texto plano.
-  const hashedSupervisorPassword = await hashPassword('supervisor');
-  const hashedPinOperaciones = await hashPassword('1234');
+  const supervisorPassword = credencialSeed(
+    'SEED_SUPERVISOR_PASSWORD',
+    () => randomBytes(12).toString('base64url'),
+  );
+  const pinOperaciones = credencialSeed(
+    'SEED_PIN',
+    () => String(1000 + Math.floor(Math.random() * 9000)),
+  );
+  const hashedSupervisorPassword = await hashPassword(supervisorPassword);
+  const hashedPinOperaciones = await hashPassword(pinOperaciones);
   const supervisor = await prisma.usuarios.upsert({
     where: { Credencial: 'supervisor' },
     update: {

@@ -105,17 +105,32 @@ export const TesoreriaService = {
         );
       }
 
-      const nuevoMontoPagado = Number(cxp.Monto_Pagado) + monto;
-      const nuevoSaldo = Number(cxp.Monto_Total) - nuevoMontoPagado;
-      const nuevoEstatus = nuevoSaldo <= 0 ? 'Pagada' : 'Pendiente';
+      // ── Abono ATÓMICO (anti-carrera) ────────────────────────────────────
+      // Antes se calculaba el nuevo Monto_Pagado en JS y se escribía el valor
+      // ABSOLUTO: dos abonos concurrentes de $50 a la misma CxP sacaban $100
+      // de caja pero solo acreditaban $50 de deuda. Ahora `increment` es
+      // atómico en la BD y se re-lee el resultado real para derivar Saldo y
+      // Estatus. El lock de fila de la transacción serializa los abonos.
+      const saldoPendienteAntes = Number(cxp.Monto_Total) - Number(cxp.Monto_Pagado);
+      if (montoD4 > toD4(saldoPendienteAntes)) {
+        throw new Error(
+          `MONTO_EXCEDE_SALDO:El abono de $${aDecimal(montoD4)} excede el saldo ` +
+          `pendiente de la cuenta ($${saldoPendienteAntes}).`,
+        );
+      }
 
       const cxpActualizada = await tx.cuentas_por_pagar.update({
         where: { CxP_ID: cxpId },
-        data: {
-          Monto_Pagado: nuevoMontoPagado,
-          Saldo: Math.max(0, nuevoSaldo),
-          Estatus: nuevoEstatus,
-        },
+        data: { Monto_Pagado: { increment: aDecimal(montoD4) } },
+      });
+
+      const nuevoMontoPagado = Number(cxpActualizada.Monto_Pagado);
+      const nuevoSaldo = Number(cxpActualizada.Monto_Total) - nuevoMontoPagado;
+      const nuevoEstatus = nuevoSaldo <= 0 ? 'Pagada' : 'Pendiente';
+
+      await tx.cuentas_por_pagar.update({
+        where: { CxP_ID: cxpId },
+        data: { Saldo: Math.max(0, nuevoSaldo), Estatus: nuevoEstatus },
       });
 
       await tx.movimientos_caja.create({

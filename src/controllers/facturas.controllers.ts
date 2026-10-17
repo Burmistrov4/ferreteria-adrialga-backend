@@ -298,7 +298,7 @@ export const createFactura = async (req: AuthRequest, res: Response) => {
       where: { Factura_ID: resultado.Factura_ID },
       include: {
         clientes: true,
-        usuarios: true,
+        usuarios: { select: { Usuario_ID: true, Nombre: true } },
         pagos: true,
         detalle_facturas: {
           include: { productos: true, producto_variantes: { include: { atributos: true } } },
@@ -587,7 +587,7 @@ export const reversarVenta = async (req: AuthRequest, res: Response) => {
       where: { Factura_ID: resultado.Factura_ID },
       include: {
         clientes: true,
-        usuarios: true,
+        usuarios: { select: { Usuario_ID: true, Nombre: true } },
         pagos: true,
         detalle_facturas: { include: { productos: true, producto_variantes: { include: { atributos: true } } } }
       }
