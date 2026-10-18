@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/db';
 import { siguienteSkuPorCategoria } from '../utils/sku';
@@ -690,6 +691,40 @@ export const subirImagenProducto = async (req: Request, res: Response) => {
             ? 'gif'
             : 'bin';
     const nombre = `sub-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+    // ── Persistencia ──────────────────────────────────────────────────────
+    // Con R2 configurado la imagen va al bucket y sobrevive a los redeploys
+    // de Render (disco efímero). Sin R2 se guarda en disco como antes.
+    const r2Endpoint = process.env.R2_ENDPOINT;
+    const r2Bucket = process.env.R2_BUCKET;
+    const r2KeyId = process.env.R2_ACCESS_KEY_ID;
+    const r2Secret = process.env.R2_SECRET_ACCESS_KEY;
+    const r2Public = process.env.R2_PUBLIC_URL;
+
+    if (r2Endpoint && r2Bucket && r2KeyId && r2Secret && r2Public) {
+      const clave = `productos/${nombre}`;
+      const s3 = new S3Client({
+        region: 'auto',
+        endpoint: r2Endpoint,
+        forcePathStyle: true,
+        credentials: {
+          accessKeyId: r2KeyId,
+          secretAccessKey: r2Secret,
+        },
+      });
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: r2Bucket,
+          Key: clave,
+          Body: buf,
+          ContentType: mime.split(';')[0] || 'application/octet-stream',
+        }),
+      );
+      return res.status(201).json({
+        url: `${r2Public.replace(/\/$/, '')}/${clave}`,
+      });
+    }
+
     const dir = process.env.PRODUCTOS_DIR
       ? path.resolve(process.env.PRODUCTOS_DIR)
       : path.resolve(__dirname, '../../public/productos');
