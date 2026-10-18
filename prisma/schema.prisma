@@ -297,6 +297,9 @@ model producto_variantes {
   // a su vez puede heredar de la categoría si el producto tampoco tiene).
   Margen_Ganancia Decimal?           @db.Decimal(18, 6)
   Stock_Actual   Int                 @default(0)
+  /// Imagen propia de la variante (ruta /productos/... o URL externa).
+  /// Null → hereda visualmente la imagen del producto padre.
+  Imagen_URL     String?             @db.VarChar(500)
   Activo         Boolean             @default(true)
   Fecha_Registro DateTime            @default(now()) @db.Timestamp(0)
   productos      productos           @relation(fields: [Producto_ID], references: [Producto_ID], map: "FK_Variantes_Producto")

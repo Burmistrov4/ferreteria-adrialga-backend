@@ -470,6 +470,8 @@ export const crearVariantesBulk = async (req: Request, res: Response) => {
         const costo = v?.costo == null ? undefined : Number(v.costo);
         const precio = v?.precio == null ? undefined : Number(v.precio);
         const stock = v?.stock == null ? undefined : Number(v.stock);
+        const imagen =
+          typeof v?.imagen === 'string' ? v.imagen.trim() : undefined;
 
         const existente = await tx.producto_variantes.findUnique({
           where: { SKU_Variante: sku },
@@ -483,11 +485,15 @@ export const crearVariantesBulk = async (req: Request, res: Response) => {
             Costo_Unitario: costo ?? 0,
             Precio_Venta: precio ?? 0,
             Stock_Actual: stock ?? 0,
+            Imagen_URL: imagen && imagen !== '' ? imagen : null,
           },
           update: {
             ...(costo !== undefined ? { Costo_Unitario: costo } : {}),
             ...(precio !== undefined ? { Precio_Venta: precio } : {}),
             ...(stock !== undefined ? { Stock_Actual: stock } : {}),
+            ...(imagen !== undefined
+              ? { Imagen_URL: imagen === '' ? null : imagen }
+              : {}),
             Activo: true,
           },
         });
@@ -536,7 +542,7 @@ export const actualizarVariante = async (req: Request, res: Response) => {
     if (!Number.isFinite(id)) {
       return res.status(400).json({ message: 'ID de variante inválido' });
     }
-    const { stock, costo, precio, activo, margen } = req.body ?? {};
+    const { stock, costo, precio, activo, margen, imagen } = req.body ?? {};
     const actualizada = await prisma.$transaction(async (tx) => {
       // La edición manual de stock de una variante debe serializarse frente
       // a ventas, entradas y reversas que también tocan esta fila.
@@ -559,6 +565,12 @@ export const actualizarVariante = async (req: Request, res: Response) => {
             ? (margen === null ? null : Number(margen))
             : undefined,
           Activo: typeof activo === 'boolean' ? activo : undefined,
+          // Imagen propia de la variante: cadena vacía limpia (vuelve a
+          // heredar la del producto); undefined deja la actual.
+          Imagen_URL:
+            typeof imagen === 'string'
+              ? (imagen.trim() === '' ? null : imagen.trim())
+              : undefined,
         },
         })
         .catch(() => null);
