@@ -1,4 +1,6 @@
 import { Request, Response } from 'express';
+import fs from 'node:fs';
+import path from 'node:path';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/db';
 import { siguienteSkuPorCategoria } from '../utils/sku';
@@ -631,21 +633,61 @@ export const eliminarVariante = async (req: Request, res: Response) => {
 export const deleteProducto = async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
-    // Eliminar primero las variantes del producto (y sus atributos por
-    // cascade del FK) para no dejar SKUs huérfanos que colisionen con el
-    // bulk de otro producto.
-    await prisma.$transaction([
-      prisma.producto_variantes.deleteMany({ where: { Producto_ID: id } }),
-      prisma.productos.delete({ where: { Producto_ID: id } }),
-    ]);
-    IoStore.emitDbUpdate('inventario', `Producto eliminado (ID ${id})`, { productoId: id });
-    res.json({ message: 'Producto eliminado correctamente' });
+    // BORRADO LÓGICO: se desactiva, no se borra. Antes el DELETE físico
+    // fallaba con P2003 cuando el producto tenía facturas asociadas (y
+    // borrarlo habría roto el historial). Ahora deja de venderse y las
+    // facturas/notas conservan su referencia intacta.
+    const actualizado = await prisma.productos.update({
+      where: { Producto_ID: id },
+      data: { Activo: false },
+    });
+    IoStore.emitDbUpdate('inventario', `Producto desactivado (ID ${id})`, { productoId: id });
+    res.json({
+      message: `Producto "${actualizado.Nombre}" desactivado. Ya no se vende; su historial queda intacto.`,
+    });
   } catch (error) {
-    // P2003 aqui es el caso importante: el producto esta referenciado por
-    // facturas/notas. Antes se devolvia 500; ahora 400 accionable.
     return responderErrorPrisma(res, error, {
       recurso: 'producto',
-      contexto: 'eliminar el',
+      contexto: 'desactivar el',
+    });
+  }
+};
+
+/**
+ * POST /productos/imagen — sube una imagen binaria y devuelve su ruta pública
+ * `/productos/<archivo>`. Recibe el cuerpo en crudo con `express.raw` (sin
+ * multer), lo que evita una dependencia extra. Límite: 8 MB.
+ */
+export const subirImagenProducto = async (req: Request, res: Response) => {
+  try {
+    const buf = req.body as Buffer;
+    if (!Buffer.isBuffer(buf) || buf.length === 0) {
+      return res.status(400).json({
+        message:
+          'Archivo vacío o tipo no soportado (envía image/png, image/jpeg o image/webp)',
+      });
+    }
+    const mime = String(req.headers['content-type'] || '').toLowerCase();
+    const ext = mime.includes('png')
+      ? 'png'
+      : mime.includes('jpeg') || mime.includes('jpg')
+        ? 'jpg'
+        : mime.includes('webp')
+          ? 'webp'
+          : mime.includes('gif')
+            ? 'gif'
+            : 'bin';
+    const nombre = `sub-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const dir = process.env.PRODUCTOS_DIR
+      ? path.resolve(process.env.PRODUCTOS_DIR)
+      : path.resolve(__dirname, '../../public/productos');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, nombre), buf);
+    return res.status(201).json({ url: `/productos/${nombre}` });
+  } catch (error) {
+    return responderErrorPrisma(res, error, {
+      recurso: 'imagen',
+      contexto: 'subir la',
     });
   }
 };
