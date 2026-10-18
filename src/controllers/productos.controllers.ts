@@ -243,6 +243,14 @@ export const createProducto = async (req: Request, res: Response) => {
           Margen_Ganancia: precios.Margen_Ganancia ?? 0,
           Stock_Actual: Number(Stock_Actual) || 0,
           Stock_Minimo: Number(Stock_Minimo) || 5,
+          // Enlace de imagen: ruta local (/productos/sku.webp) o URL externa
+          // (http/https). Antes el formulario lo enviaba y el backend lo
+          // descartaba en silencio.
+          Imagen_URL:
+            typeof req.body.Imagen_URL === 'string' &&
+            req.body.Imagen_URL.trim() !== ''
+              ? req.body.Imagen_URL.trim()
+              : null,
           Categoria_ID: Number(Categoria_ID)
         },
         include: { categorias: true }
@@ -321,6 +329,14 @@ export const updateProducto = async (req: Request, res: Response) => {
         Margen_Ganancia: precios.Margen_Ganancia,
         Stock_Actual: Stock_Actual !== undefined ? Number(Stock_Actual) : undefined,
         Stock_Minimo: Stock_Minimo !== undefined ? Number(Stock_Minimo) : undefined,
+        // Igual que en create: cadena vacía limpia la imagen; undefined la
+        // deja intacta. Cualquier URL http(s) es válida.
+        Imagen_URL:
+          typeof req.body.Imagen_URL === 'string'
+            ? (req.body.Imagen_URL.trim() === ''
+                ? null
+                : req.body.Imagen_URL.trim())
+            : undefined,
         Categoria_ID: Categoria_ID !== undefined ? Number(Categoria_ID) : undefined
       },
       include: { categorias: true }
